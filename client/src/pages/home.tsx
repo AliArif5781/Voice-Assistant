@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Mic, Zap, Shield, Database, Menu, X, ArrowRight, Play } from "lucide-react";
+import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play } from "lucide-react";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 // Import generated assets
 import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualization.png";
@@ -13,16 +17,55 @@ import orbImage from "@assets/generated_images/glowing_ai_voice_interface_orb.pn
 export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [demoText, setDemoText] = useState("Click the microphone to speak...");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const toggleListening = () => {
+  const { data: interactions = [], isLoading } = useQuery({
+    queryKey: ["voice-interactions"],
+    queryFn: () => getVoiceInteractions(),
+  });
+
+  const { data: firebaseStatus } = useQuery({
+    queryKey: ["firebase-config"],
+    queryFn: checkFirebaseConfig,
+  });
+
+  const createInteractionMutation = useMutation({
+    mutationFn: createVoiceInteraction,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["voice-interactions"] });
+      toast({
+        title: "Success",
+        description: "Voice interaction saved successfully!",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to save voice interaction",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleListening = async () => {
     setIsListening(!isListening);
     if (!isListening) {
       setDemoText("Listening...");
       setTimeout(() => {
         setDemoText("Searching database...");
         setIsListening(false);
-        setTimeout(() => {
-          setDemoText("Here is what I found in your Firestore database.");
+        setTimeout(async () => {
+          const response = "Here is what I found in your database.";
+          setDemoText(response);
+          
+          await createInteractionMutation.mutateAsync({
+            transcript: "Show me my data",
+            response,
+            userId: "demo-user",
+            firebaseDocId: null,
+            metadata: null,
+          });
         }, 1000);
       }, 3000);
     } else {
@@ -217,11 +260,18 @@ export default function Home() {
           <div className="max-w-4xl mx-auto">
             <div className="glass-panel rounded-3xl p-8 md:p-12 border border-white/10 shadow-2xl">
               <div className="flex flex-col items-center text-center">
-                <h2 className="text-3xl font-heading font-bold mb-8">Try it Live</h2>
+                <h2 className="text-3xl font-heading font-bold mb-4">Try it Live</h2>
                 
-                <div className="w-full max-w-md bg-black/40 rounded-2xl p-6 mb-8 border border-white/5 min-h-[120px] flex flex-col items-center justify-center">
+                {firebaseStatus && (
+                  <div className="flex items-center gap-2 mb-6 text-sm">
+                    <CheckCircle2 className={`w-4 h-4 ${firebaseStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
+                    <span className="text-muted-foreground">{firebaseStatus.message}</span>
+                  </div>
+                )}
+                
+                <div className="w-full max-w-md bg-black/40 rounded-2xl p-6 mb-8 border border-white/5 min-h-[120px] flex flex-col items-center justify-center" data-testid="demo-output">
                   <VoiceVisualizer isListening={isListening} />
-                  <p className="mt-4 text-lg font-medium text-white/90 transition-all">
+                  <p className="mt-4 text-lg font-medium text-white/90 transition-all" data-testid="text-demo-response">
                     "{demoText}"
                   </p>
                 </div>
@@ -229,6 +279,8 @@ export default function Home() {
                 <Button
                   size="lg"
                   onClick={toggleListening}
+                  data-testid="button-mic-toggle"
+                  disabled={createInteractionMutation.isPending}
                   className={`h-16 w-16 rounded-full p-0 transition-all duration-300 ${
                     isListening 
                       ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
@@ -244,6 +296,64 @@ export default function Home() {
                 <p className="mt-4 text-sm text-muted-foreground">Tap to interact with the AI</p>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Interaction History Section */}
+      <section className="py-24 bg-background">
+        <div className="container mx-auto px-6">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center gap-3 mb-8">
+              <History className="w-8 h-8 text-primary" />
+              <h2 className="text-3xl font-heading font-bold">Interaction History</h2>
+            </div>
+            
+            {isLoading ? (
+              <div className="text-center py-12 text-muted-foreground">Loading interactions...</div>
+            ) : interactions.length === 0 ? (
+              <div className="text-center py-12 glass-panel rounded-2xl border border-white/5">
+                <Database className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+                <p className="text-muted-foreground">No interactions yet. Try the demo above!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {interactions.map((interaction) => (
+                  <motion.div
+                    key={interaction.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    data-testid={`card-interaction-${interaction.id}`}
+                  >
+                    <Card className="bg-card/30 border-white/5 backdrop-blur-sm hover:bg-card/50 transition-colors">
+                      <CardContent className="p-6">
+                        <div className="flex items-start gap-4">
+                          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                            <Mic className="w-5 h-5 text-primary" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                              <p className="font-medium" data-testid={`text-transcript-${interaction.id}`}>"{interaction.transcript}"</p>
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {format(new Date(interaction.createdAt), "MMM d, h:mm a")}
+                              </span>
+                            </div>
+                            <p className="text-muted-foreground text-sm" data-testid={`text-response-${interaction.id}`}>
+                              {interaction.response}
+                            </p>
+                            {interaction.firebaseDocId && (
+                              <div className="mt-2 text-xs text-accent font-mono">
+                                Firebase Doc: {interaction.firebaseDocId}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
