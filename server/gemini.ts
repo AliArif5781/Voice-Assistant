@@ -14,9 +14,9 @@ Please provide a helpful, conversational response. Keep it concise and friendly.
     });
 
     return response.text || "I'm sorry, I couldn't process that request.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini API error:", error);
-    throw new Error("Failed to process voice input with AI");
+    throw new Error(error.message || "Failed to process voice input with AI");
   }
 }
 
