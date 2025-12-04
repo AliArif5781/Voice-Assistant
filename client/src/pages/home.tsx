@@ -1,27 +1,40 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X } from "lucide-react";
+import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X, Brain, AlertCircle } from "lucide-react";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, type FirebaseConfigResponse } from "@/lib/api";
+import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, checkGeminiConfig, processWithGemini, type FirebaseConfigResponse } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { initializeFirebase, saveToFirestore, isFirebaseInitialized } from "@/lib/firebase";
+import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 
 // Import generated assets
 import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualization.png";
 import orbImage from "@assets/generated_images/glowing_ai_voice_interface_orb.png";
 
 export default function Home() {
-  const [isListening, setIsListening] = useState(false);
-  const [demoText, setDemoText] = useState("Click the microphone to speak...");
+  const [displayText, setDisplayText] = useState("Click the microphone to speak...");
+  const [aiResponse, setAiResponse] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const firebaseInitialized = useRef(false);
+
+  const {
+    isListening,
+    transcript,
+    interimTranscript,
+    error: speechError,
+    isSupported: isSpeechSupported,
+    startListening,
+    stopListening,
+    resetTranscript,
+  } = useSpeechRecognition();
 
   const { data: interactions = [], isLoading } = useQuery({
     queryKey: ["voice-interactions"],
@@ -31,6 +44,11 @@ export default function Home() {
   const { data: firebaseStatus } = useQuery({
     queryKey: ["firebase-config"],
     queryFn: checkFirebaseConfig,
+  });
+
+  const { data: geminiStatus } = useQuery({
+    queryKey: ["gemini-config"],
+    queryFn: checkGeminiConfig,
   });
 
   // Initialize Firebase when config is available
@@ -46,13 +64,21 @@ export default function Home() {
     }
   }, [firebaseStatus]);
 
+  // Update display text when listening
+  useEffect(() => {
+    if (isListening) {
+      const currentText = transcript + interimTranscript;
+      setDisplayText(currentText || "Listening...");
+    }
+  }, [isListening, transcript, interimTranscript]);
+
   const createInteractionMutation = useMutation({
     mutationFn: createVoiceInteraction,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["voice-interactions"] });
       toast({
         title: "Success",
-        description: "Voice interaction saved to database!",
+        description: "Voice interaction saved!",
       });
     },
     onError: () => {
@@ -64,52 +90,77 @@ export default function Home() {
     },
   });
 
-  const toggleListening = async () => {
-    setIsListening(!isListening);
-    if (!isListening) {
-      setDemoText("Listening...");
-      setTimeout(() => {
-        setDemoText("Saving to Firestore...");
-        setIsListening(false);
-        setTimeout(async () => {
-          const transcript = "Show me my data";
-          const response = "Data saved to Firestore successfully!";
-          
-          let firebaseDocId: string | null = null;
-          
-          // Save to Firestore if available
-          if (firebaseReady && isFirebaseInitialized()) {
-            try {
-              firebaseDocId = await saveToFirestore("voice_interactions", {
-                transcript,
-                response,
-                userId: "demo-user",
-              });
-              setDemoText(`Saved! Document ID: ${firebaseDocId.substring(0, 8)}...`);
-              toast({
-                title: "Firestore Success",
-                description: "Data saved to Firebase Firestore!",
-              });
-            } catch (error) {
-              console.error("Firestore error:", error);
-              setDemoText("Saved to local database.");
-            }
-          } else {
-            setDemoText(response);
-          }
-          
-          // Also save to our backend
-          await createInteractionMutation.mutateAsync({
-            transcript,
+  const processTranscript = async (text: string) => {
+    if (!text.trim()) {
+      setDisplayText("No speech detected. Try again.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setDisplayText(`You said: "${text}"`);
+    setAiResponse("Processing with AI...");
+
+    try {
+      // Process with Gemini AI
+      const result = await processWithGemini(text);
+      const response = result.response;
+      setAiResponse(response);
+
+      let firebaseDocId: string | null = null;
+
+      // Save to Firestore if available
+      if (firebaseReady && isFirebaseInitialized()) {
+        try {
+          firebaseDocId = await saveToFirestore("voice_interactions", {
+            transcript: text,
             response,
             userId: "demo-user",
-            firebaseDocId,
-            metadata: null,
           });
-        }, 1000);
-      }, 2000);
+          toast({
+            title: "Saved to Firestore",
+            description: `Document ID: ${firebaseDocId.substring(0, 8)}...`,
+          });
+        } catch (error) {
+          console.error("Firestore error:", error);
+        }
+      }
+
+      // Save to backend database
+      await createInteractionMutation.mutateAsync({
+        transcript: text,
+        response,
+        userId: "demo-user",
+        firebaseDocId,
+        metadata: null,
+      });
+    } catch (error: any) {
+      console.error("Processing error:", error);
+      setAiResponse("Sorry, I couldn't process that. Please try again.");
+      toast({
+        title: "Processing Error",
+        description: error.message || "Failed to process with AI",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const toggleListening = async () => {
+    if (isListening) {
+      stopListening();
+      // Process the transcript after stopping
+      const finalTranscript = transcript;
+      if (finalTranscript) {
+        await processTranscript(finalTranscript);
+      } else {
+        setDisplayText("Click the microphone to speak...");
+      }
+      resetTranscript();
     } else {
-      setDemoText("Click the microphone to speak...");
+      setDisplayText("Listening...");
+      setAiResponse("");
+      startListening();
     }
   };
 
@@ -309,38 +360,64 @@ export default function Home() {
               <div className="flex flex-col items-center text-center">
                 <h2 className="text-3xl font-heading font-bold mb-4">Try it Live</h2>
                 
-                {firebaseStatus && (
-                  <div className="flex items-center gap-2 mb-6 text-sm">
-                    <CheckCircle2 className={`w-4 h-4 ${firebaseStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
-                    <span className="text-muted-foreground">{firebaseStatus.message}</span>
-                  </div>
-                )}
+                <div className="flex flex-wrap items-center justify-center gap-4 mb-6 text-sm">
+                  {firebaseStatus && (
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className={`w-4 h-4 ${firebaseStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
+                      <span className="text-muted-foreground">{firebaseStatus.message}</span>
+                    </div>
+                  )}
+                  {geminiStatus && (
+                    <div className="flex items-center gap-2">
+                      <Brain className={`w-4 h-4 ${geminiStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
+                      <span className="text-muted-foreground">{geminiStatus.message}</span>
+                    </div>
+                  )}
+                  {!isSpeechSupported && (
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-400" />
+                      <span className="text-muted-foreground">Speech not supported in this browser</span>
+                    </div>
+                  )}
+                </div>
                 
-                <div className="w-full max-w-md bg-black/40 rounded-2xl p-6 mb-8 border border-white/5 min-h-[120px] flex flex-col items-center justify-center" data-testid="demo-output">
-                  <VoiceVisualizer isListening={isListening} />
-                  <p className="mt-4 text-lg font-medium text-white/90 transition-all" data-testid="text-demo-response">
-                    "{demoText}"
+                <div className="w-full max-w-md bg-black/40 rounded-2xl p-6 mb-8 border border-white/5 min-h-[160px] flex flex-col items-center justify-center" data-testid="demo-output">
+                  <VoiceVisualizer isListening={isListening || isProcessing} />
+                  <p className="mt-4 text-lg font-medium text-white/90 transition-all text-center" data-testid="text-demo-response">
+                    {displayText}
                   </p>
+                  {aiResponse && (
+                    <div className="mt-4 p-4 bg-primary/10 rounded-xl border border-primary/20 w-full">
+                      <p className="text-sm text-primary font-medium mb-1">AI Response:</p>
+                      <p className="text-sm text-white/80" data-testid="text-ai-response">{aiResponse}</p>
+                    </div>
+                  )}
                 </div>
 
                 <Button
                   size="lg"
                   onClick={toggleListening}
                   data-testid="button-mic-toggle"
-                  disabled={createInteractionMutation.isPending}
+                  disabled={isProcessing || createInteractionMutation.isPending || !isSpeechSupported}
                   className={`h-16 w-16 rounded-full p-0 transition-all duration-300 ${
                     isListening 
                       ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
-                      : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
+                      : isProcessing
+                        ? 'bg-yellow-500 hover:bg-yellow-600 shadow-[0_0_30px_rgba(234,179,8,0.4)]'
+                        : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
                   }`}
                 >
                   {isListening ? (
                     <div className="w-4 h-4 bg-white rounded-sm" />
+                  ) : isProcessing ? (
+                    <Brain className="w-8 h-8 text-white animate-pulse" />
                   ) : (
                     <Mic className="w-8 h-8 text-primary-foreground" />
                   )}
                 </Button>
-                <p className="mt-4 text-sm text-muted-foreground">Tap to interact with the AI</p>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {isListening ? "Click to stop and process" : isProcessing ? "Processing your speech..." : "Tap to start speaking"}
+                </p>
               </div>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertVoiceInteractionSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
+import { processVoiceInput, isGeminiConfigured } from "./gemini";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -48,6 +49,40 @@ export async function registerRoutes(
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch voice interaction" });
     }
+  });
+
+  // Gemini AI processing endpoint
+  app.post("/api/gemini/process", async (req, res) => {
+    try {
+      if (!isGeminiConfigured()) {
+        return res.status(503).json({ 
+          error: "Gemini API not configured",
+          message: "Please add your GEMINI_API_KEY to use AI features"
+        });
+      }
+
+      const { transcript } = req.body;
+      
+      if (!transcript || typeof transcript !== "string") {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+
+      const response = await processVoiceInput(transcript);
+      res.json({ response });
+    } catch (error: any) {
+      console.error("Gemini processing error:", error);
+      res.status(500).json({ error: "Failed to process with AI", message: error.message });
+    }
+  });
+
+  // Gemini config status endpoint
+  app.get("/api/gemini/config", async (req, res) => {
+    res.json({
+      available: isGeminiConfigured(),
+      message: isGeminiConfigured() 
+        ? "Gemini AI is configured and ready" 
+        : "Gemini API key not yet configured"
+    });
   });
 
   // Firebase config endpoint - exposes config for frontend initialization

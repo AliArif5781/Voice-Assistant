@@ -53,3 +53,37 @@ export async function checkFirebaseConfig(): Promise<FirebaseConfigResponse> {
   
   return response.json();
 }
+
+export interface GeminiConfigResponse {
+  available: boolean;
+  message: string;
+}
+
+export interface GeminiProcessResponse {
+  response: string;
+}
+
+export async function checkGeminiConfig(): Promise<GeminiConfigResponse> {
+  const response = await fetch("/api/gemini/config");
+  
+  if (!response.ok) {
+    throw new Error("Failed to check Gemini config");
+  }
+  
+  return response.json();
+}
+
+export async function processWithGemini(transcript: string): Promise<GeminiProcessResponse> {
+  const response = await fetch("/api/gemini/process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Failed to process with AI");
+  }
+  
+  return response.json();
+}
