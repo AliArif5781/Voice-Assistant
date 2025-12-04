@@ -1,40 +1,93 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Mic, MicOff, Volume2 } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
+import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 
 import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualization.png";
 
 export default function Home() {
   const [savedTranscripts, setSavedTranscripts] = useState<string[]>([]);
+  const [currentTranscript, setCurrentTranscript] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const {
-    isListening,
-    transcript,
-    interimTranscript,
-    error: speechError,
-    isSupported: isSpeechSupported,
-    startListening,
-    stopListening,
-    resetTranscript,
-  } = useSpeechRecognition();
+    isRecording,
+    error: recordingError,
+    startRecording,
+    stopRecording,
+    resetRecording,
+  } = useAudioRecorder();
 
-  const currentText = transcript + interimTranscript;
+  const handleToggleRecording = async () => {
+    if (isRecording) {
+      setIsProcessing(true);
+      setError(null);
+      setCurrentTranscript("");
+      
+      try {
+        const audioBlob = await stopRecording();
+        
+        if (audioBlob && audioBlob.size > 0) {
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            try {
+              const base64Audio = (reader.result as string).split(',')[1];
+              
+              const response = await fetch('/api/transcribe', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  audio: base64Audio,
+                  mimeType: audioBlob.type
+                }),
+              });
 
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-      if (transcript.trim()) {
-        setSavedTranscripts(prev => [transcript.trim(), ...prev]);
+              if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to transcribe audio');
+              }
+
+              const data = await response.json();
+              const transcript = data.transcript?.trim() || "";
+              
+              if (transcript && transcript !== "No speech detected.") {
+                setCurrentTranscript(transcript);
+                setSavedTranscripts(prev => [transcript, ...prev]);
+              } else {
+                setCurrentTranscript("No speech detected. Try speaking louder or closer to the microphone.");
+              }
+            } catch (err: any) {
+              console.error('Transcription error:', err);
+              setError(err.message || 'Failed to transcribe audio');
+            } finally {
+              setIsProcessing(false);
+            }
+          };
+          reader.readAsDataURL(audioBlob);
+        } else {
+          setCurrentTranscript("No audio recorded. Please try again.");
+          setIsProcessing(false);
+        }
+      } catch (err: any) {
+        console.error('Recording error:', err);
+        setError(err.message || 'Failed to process recording');
+        setIsProcessing(false);
       }
-      resetTranscript();
+      
+      resetRecording();
     } else {
-      resetTranscript();
-      startListening();
+      setError(null);
+      setCurrentTranscript("");
+      await startRecording();
     }
   };
+
+  const displayError = error || recordingError;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -61,7 +114,7 @@ export default function Home() {
               Voice to Text
             </h1>
             <p className="text-lg text-muted-foreground">
-              Click the microphone and start speaking
+              Click the microphone, speak, and see your words appear
             </p>
           </div>
 
@@ -72,40 +125,57 @@ export default function Home() {
               <div className="flex flex-col items-center">
                 <Button
                   size="lg"
-                  onClick={toggleListening}
-                  disabled={!isSpeechSupported}
+                  onClick={handleToggleRecording}
+                  disabled={isProcessing}
                   data-testid="button-mic-toggle"
                   className={`h-24 w-24 rounded-full p-0 transition-all duration-300 ${
-                    isListening 
+                    isRecording 
                       ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_40px_rgba(239,68,68,0.5)] animate-pulse' 
-                      : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
+                      : isProcessing
+                        ? 'bg-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.4)]'
+                        : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
                   }`}
                 >
-                  {isListening ? (
+                  {isRecording ? (
                     <MicOff className="w-10 h-10 text-white" />
+                  ) : isProcessing ? (
+                    <Loader2 className="w-10 h-10 text-white animate-spin" />
                   ) : (
                     <Mic className="w-10 h-10 text-primary-foreground" />
                   )}
                 </Button>
 
                 <p className="mt-4 text-sm text-muted-foreground">
-                  {isListening ? "Listening... Click to stop" : "Click to start speaking"}
+                  {isRecording 
+                    ? "Recording... Click to stop and transcribe" 
+                    : isProcessing 
+                      ? "Transcribing your speech..." 
+                      : "Click to start recording"}
                 </p>
               </div>
 
               {/* Current Speech Display */}
               <div className="mt-8 min-h-[120px] p-6 bg-background/50 rounded-xl border border-border/30">
                 <div className="flex items-start gap-3">
-                  <Volume2 className={`w-5 h-5 mt-1 flex-shrink-0 ${isListening ? 'text-primary animate-pulse' : 'text-muted-foreground'}`} />
+                  <Volume2 className={`w-5 h-5 mt-1 flex-shrink-0 ${isRecording ? 'text-red-500 animate-pulse' : isProcessing ? 'text-yellow-500' : 'text-muted-foreground'}`} />
                   <div className="flex-1">
-                    {currentText ? (
+                    {isRecording ? (
+                      <p className="text-lg text-foreground leading-relaxed" data-testid="text-recording-status">
+                        Listening to you speak...
+                        <span className="animate-pulse text-red-500"> [Recording]</span>
+                      </p>
+                    ) : isProcessing ? (
+                      <p className="text-lg text-yellow-500 leading-relaxed flex items-center gap-2" data-testid="text-processing-status">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Processing your audio...
+                      </p>
+                    ) : currentTranscript ? (
                       <p className="text-lg text-foreground leading-relaxed" data-testid="text-current-speech">
-                        {currentText}
-                        {isListening && <span className="animate-pulse text-primary">|</span>}
+                        {currentTranscript}
                       </p>
                     ) : (
                       <p className="text-lg text-muted-foreground italic" data-testid="text-placeholder">
-                        {isListening ? "Start speaking..." : "Your speech will appear here"}
+                        Your speech will appear here
                       </p>
                     )}
                   </div>
@@ -113,19 +183,10 @@ export default function Home() {
               </div>
 
               {/* Error Display */}
-              {speechError && (
+              {displayError && (
                 <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-xl">
                   <p className="text-sm text-destructive" data-testid="text-error">
-                    {speechError}
-                  </p>
-                </div>
-              )}
-
-              {/* Browser Support Warning */}
-              {!isSpeechSupported && (
-                <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
-                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                    Speech recognition is not supported in this browser. Please try Chrome or Edge.
+                    {displayError}
                   </p>
                 </div>
               )}

@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertVoiceInteractionSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
-import { processVoiceInput, isGeminiConfigured } from "./gemini";
+import { processVoiceInput, isGeminiConfigured, transcribeAudio } from "./gemini";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -48,6 +48,30 @@ export async function registerRoutes(
       res.json(interaction);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch voice interaction" });
+    }
+  });
+
+  // Audio transcription endpoint
+  app.post("/api/transcribe", async (req, res) => {
+    try {
+      if (!isGeminiConfigured()) {
+        return res.status(503).json({ 
+          error: "Gemini API not configured",
+          message: "Please add your GEMINI_API_KEY to transcribe audio"
+        });
+      }
+
+      const { audio, mimeType } = req.body;
+      
+      if (!audio || typeof audio !== "string") {
+        return res.status(400).json({ error: "audio (base64) is required" });
+      }
+
+      const transcript = await transcribeAudio(audio, mimeType || "audio/webm");
+      res.json({ transcript });
+    } catch (error: any) {
+      console.error("Transcription error:", error);
+      res.status(500).json({ error: "Failed to transcribe audio", message: error.message });
     }
   });
 

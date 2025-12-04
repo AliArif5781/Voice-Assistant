@@ -20,6 +20,30 @@ Please provide a helpful, conversational response. Keep it concise and friendly.
   }
 }
 
+export async function transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
+  try {
+    const contents = [
+      {
+        inlineData: {
+          data: audioBase64,
+          mimeType: mimeType,
+        },
+      },
+      "Please transcribe this audio. Only output the exact words spoken, nothing else. If no speech is detected, respond with 'No speech detected.'",
+    ];
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: contents,
+    });
+
+    return response.text || "No speech detected.";
+  } catch (error: any) {
+    console.error("Gemini transcription error:", error);
+    throw new Error(error.message || "Failed to transcribe audio");
+  }
+}
+
 export function isGeminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
