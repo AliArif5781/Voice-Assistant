@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
-import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X } from "lucide-react";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, type FirebaseConfigResponse } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -19,6 +18,7 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [demoText, setDemoText] = useState("Click the microphone to speak...");
   const [firebaseReady, setFirebaseReady] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const firebaseInitialized = useRef(false);
@@ -134,28 +134,35 @@ export default function Home() {
             <Button className="bg-primary text-primary-foreground hover:bg-primary/90">Get Started</Button>
           </div>
 
-          {/* Mobile Nav */}
+          {/* Mobile Nav Toggle */}
           <div className="md:hidden">
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Menu className="w-6 h-6" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="bg-card border-l border-white/10">
-                <div className="flex flex-col gap-6 mt-10">
-                  <a href="#features" className="text-lg font-medium">Features</a>
-                  <a href="#demo" className="text-lg font-medium">Live Demo</a>
-                  <a href="#pricing" className="text-lg font-medium">Pricing</a>
-                  <div className="flex flex-col gap-3 mt-4">
-                    <Button variant="outline" className="w-full">Log in</Button>
-                    <Button className="w-full">Get Started</Button>
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
+            <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} data-testid="button-mobile-menu">
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </Button>
           </div>
         </div>
+        
+        {/* Mobile Menu Overlay */}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="md:hidden bg-card/95 backdrop-blur-lg border-b border-white/10"
+            >
+              <div className="container mx-auto px-6 py-6 flex flex-col gap-4">
+                <a href="#features" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Features</a>
+                <a href="#demo" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Live Demo</a>
+                <a href="#pricing" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Pricing</a>
+                <div className="flex flex-col gap-3 mt-2 pt-4 border-t border-white/10">
+                  <Button variant="outline" className="w-full">Log in</Button>
+                  <Button className="w-full">Get Started</Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
       {/* Hero Section */}
