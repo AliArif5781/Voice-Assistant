@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X, Brain, AlertCircle } from "lucide-react";
+import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X, Brain, AlertCircle, Send, Keyboard } from "lucide-react";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, checkGeminiConfig, processWithGemini, type FirebaseConfigResponse } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -16,11 +17,13 @@ import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualizat
 import orbImage from "@assets/generated_images/glowing_ai_voice_interface_orb.png";
 
 export default function Home() {
-  const [displayText, setDisplayText] = useState("Click the microphone to speak...");
+  const [displayText, setDisplayText] = useState("Click the microphone to speak or type below...");
   const [aiResponse, setAiResponse] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [useTextInput, setUseTextInput] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const firebaseInitialized = useRef(false);
@@ -154,13 +157,28 @@ export default function Home() {
       if (finalTranscript) {
         await processTranscript(finalTranscript);
       } else {
-        setDisplayText("Click the microphone to speak...");
+        setDisplayText("Click the microphone to speak or type below...");
       }
       resetTranscript();
     } else {
       setDisplayText("Listening...");
       setAiResponse("");
       startListening();
+    }
+  };
+
+  const handleTextSubmit = async () => {
+    if (!textInput.trim()) return;
+    
+    const text = textInput.trim();
+    setTextInput("");
+    await processTranscript(text);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleTextSubmit();
     }
   };
 
@@ -394,30 +412,62 @@ export default function Home() {
                   )}
                 </div>
 
-                <Button
-                  size="lg"
-                  onClick={toggleListening}
-                  data-testid="button-mic-toggle"
-                  disabled={isProcessing || createInteractionMutation.isPending || !isSpeechSupported}
-                  className={`h-16 w-16 rounded-full p-0 transition-all duration-300 ${
-                    isListening 
-                      ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
-                      : isProcessing
-                        ? 'bg-yellow-500 hover:bg-yellow-600 shadow-[0_0_30px_rgba(234,179,8,0.4)]'
-                        : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
-                  }`}
-                >
-                  {isListening ? (
-                    <div className="w-4 h-4 bg-white rounded-sm" />
-                  ) : isProcessing ? (
-                    <Brain className="w-8 h-8 text-white animate-pulse" />
-                  ) : (
-                    <Mic className="w-8 h-8 text-primary-foreground" />
-                  )}
-                </Button>
-                <p className="mt-4 text-sm text-muted-foreground">
-                  {isListening ? "Click to stop and process" : isProcessing ? "Processing your speech..." : "Tap to start speaking"}
+                {speechError && (
+                  <div className="w-full max-w-md mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+                    <p className="text-sm text-red-400 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      {speechError}
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-4 mb-6">
+                  <Button
+                    size="lg"
+                    onClick={toggleListening}
+                    data-testid="button-mic-toggle"
+                    disabled={isProcessing || createInteractionMutation.isPending}
+                    className={`h-16 w-16 rounded-full p-0 transition-all duration-300 ${
+                      isListening 
+                        ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
+                        : isProcessing
+                          ? 'bg-yellow-500 hover:bg-yellow-600 shadow-[0_0_30px_rgba(234,179,8,0.4)]'
+                          : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
+                    }`}
+                  >
+                    {isListening ? (
+                      <div className="w-4 h-4 bg-white rounded-sm" />
+                    ) : isProcessing ? (
+                      <Brain className="w-8 h-8 text-white animate-pulse" />
+                    ) : (
+                      <Mic className="w-8 h-8 text-primary-foreground" />
+                    )}
+                  </Button>
+                </div>
+
+                <p className="mb-4 text-sm text-muted-foreground">
+                  {isListening ? "Click to stop and process" : isProcessing ? "Processing..." : "Tap microphone or type below"}
                 </p>
+
+                <div className="w-full max-w-md flex gap-2">
+                  <Input
+                    type="text"
+                    placeholder="Type your message here..."
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    disabled={isProcessing || isListening}
+                    className="flex-1 bg-black/30 border-white/10 text-white placeholder:text-white/40"
+                    data-testid="input-text-message"
+                  />
+                  <Button
+                    onClick={handleTextSubmit}
+                    disabled={isProcessing || isListening || !textInput.trim()}
+                    data-testid="button-send-text"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

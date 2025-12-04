@@ -1,10 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
-interface SpeechRecognitionResult {
-  transcript: string;
-  isFinal: boolean;
-}
-
 interface UseSpeechRecognitionReturn {
   isListening: boolean;
   transcript: string;
@@ -29,9 +24,17 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const isSupported = typeof window !== "undefined" && 
     (!!window.SpeechRecognition || !!window.webkitSpeechRecognition);
+
+  const clearRestartTimeout = useCallback(() => {
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!isSupported) return;
@@ -43,6 +46,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: any) => {
       let finalTranscript = "";
@@ -65,25 +69,38 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
-      setError(event.error);
+      
+      // Handle specific errors
+      if (event.error === "network") {
+        setError("Network error - speech recognition requires internet connection. Try typing instead.");
+      } else if (event.error === "not-allowed") {
+        setError("Microphone access denied. Please allow microphone access.");
+      } else if (event.error === "no-speech") {
+        // Restart on no-speech if still listening
+        return;
+      } else {
+        setError(`Speech error: ${event.error}`);
+      }
       setIsListening(false);
     };
 
     recognition.onend = () => {
+      // Only set listening to false if we're not trying to continue
       setIsListening(false);
       setInterimTranscript("");
     };
 
     return () => {
+      clearRestartTimeout();
       if (recognition) {
         recognition.abort();
       }
     };
-  }, [isSupported]);
+  }, [isSupported, clearRestartTimeout]);
 
   const startListening = useCallback(() => {
     if (!isSupported || !recognitionRef.current) {
-      setError("Speech recognition is not supported in this browser");
+      setError("Speech recognition is not supported in this browser. Try typing instead.");
       return;
     }
 
@@ -94,22 +111,33 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     try {
       recognitionRef.current.start();
       setIsListening(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to start speech recognition:", err);
-      setError("Failed to start speech recognition");
+      if (err.message?.includes("already started")) {
+        // Already started, that's fine
+        setIsListening(true);
+      } else {
+        setError("Failed to start speech recognition. Try typing instead.");
+      }
     }
   }, [isSupported]);
 
   const stopListening = useCallback(() => {
-    if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
+    clearRestartTimeout();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        // Ignore errors when stopping
+      }
       setIsListening(false);
     }
-  }, [isListening]);
+  }, [clearRestartTimeout]);
 
   const resetTranscript = useCallback(() => {
     setTranscript("");
     setInterimTranscript("");
+    setError(null);
   }, []);
 
   return {
