@@ -50,14 +50,33 @@ export async function registerRoutes(
     }
   });
 
-  // Firebase config endpoint
+  // Firebase config endpoint - exposes config for frontend initialization
   app.get("/api/firebase/config", async (req, res) => {
-    res.json({
-      available: !!process.env.FIREBASE_API_KEY,
-      message: process.env.FIREBASE_API_KEY 
-        ? "Firebase is configured and ready" 
-        : "Firebase credentials not yet configured"
-    });
+    const hasConfig = !!(
+      process.env.FIREBASE_API_KEY &&
+      process.env.FIREBASE_AUTH_DOMAIN &&
+      process.env.FIREBASE_PROJECT_ID
+    );
+    
+    if (hasConfig) {
+      res.json({
+        available: true,
+        message: "Firebase is configured and ready",
+        config: {
+          apiKey: process.env.FIREBASE_API_KEY,
+          authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+          messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+          appId: process.env.FIREBASE_APP_ID,
+        }
+      });
+    } else {
+      res.json({
+        available: false,
+        message: "Firebase credentials not yet configured"
+      });
+    }
   });
 
   return httpServer;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play } from "lucide-react";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig } from "@/lib/api";
+import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, type FirebaseConfigResponse } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { initializeFirebase, saveToFirestore, isFirebaseInitialized } from "@/lib/firebase";
 
 // Import generated assets
 import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualization.png";
@@ -17,8 +18,10 @@ import orbImage from "@assets/generated_images/glowing_ai_voice_interface_orb.pn
 export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [demoText, setDemoText] = useState("Click the microphone to speak...");
+  const [firebaseReady, setFirebaseReady] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const firebaseInitialized = useRef(false);
 
   const { data: interactions = [], isLoading } = useQuery({
     queryKey: ["voice-interactions"],
@@ -30,13 +33,26 @@ export default function Home() {
     queryFn: checkFirebaseConfig,
   });
 
+  // Initialize Firebase when config is available
+  useEffect(() => {
+    if (firebaseStatus?.available && firebaseStatus.config && !firebaseInitialized.current) {
+      try {
+        initializeFirebase(firebaseStatus.config);
+        firebaseInitialized.current = true;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error("Failed to initialize Firebase:", error);
+      }
+    }
+  }, [firebaseStatus]);
+
   const createInteractionMutation = useMutation({
     mutationFn: createVoiceInteraction,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["voice-interactions"] });
       toast({
         title: "Success",
-        description: "Voice interaction saved successfully!",
+        description: "Voice interaction saved to database!",
       });
     },
     onError: () => {
@@ -53,21 +69,45 @@ export default function Home() {
     if (!isListening) {
       setDemoText("Listening...");
       setTimeout(() => {
-        setDemoText("Searching database...");
+        setDemoText("Saving to Firestore...");
         setIsListening(false);
         setTimeout(async () => {
-          const response = "Here is what I found in your database.";
-          setDemoText(response);
+          const transcript = "Show me my data";
+          const response = "Data saved to Firestore successfully!";
           
+          let firebaseDocId: string | null = null;
+          
+          // Save to Firestore if available
+          if (firebaseReady && isFirebaseInitialized()) {
+            try {
+              firebaseDocId = await saveToFirestore("voice_interactions", {
+                transcript,
+                response,
+                userId: "demo-user",
+              });
+              setDemoText(`Saved! Document ID: ${firebaseDocId.substring(0, 8)}...`);
+              toast({
+                title: "Firestore Success",
+                description: "Data saved to Firebase Firestore!",
+              });
+            } catch (error) {
+              console.error("Firestore error:", error);
+              setDemoText("Saved to local database.");
+            }
+          } else {
+            setDemoText(response);
+          }
+          
+          // Also save to our backend
           await createInteractionMutation.mutateAsync({
-            transcript: "Show me my data",
+            transcript,
             response,
             userId: "demo-user",
-            firebaseDocId: null,
+            firebaseDocId,
             metadata: null,
           });
         }, 1000);
-      }, 3000);
+      }, 2000);
     } else {
       setDemoText("Click the microphone to speak...");
     }
