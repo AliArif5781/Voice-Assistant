@@ -1,32 +1,14 @@
-import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Zap, Shield, Database, Menu, History, CheckCircle2, Play, X, Brain, AlertCircle, Send, Keyboard } from "lucide-react";
-import { VoiceVisualizer } from "@/components/voice-visualizer";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { Mic, MicOff, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createVoiceInteraction, getVoiceInteractions, checkFirebaseConfig, checkGeminiConfig, processWithGemini, type FirebaseConfigResponse } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
-import { initializeFirebase, saveToFirestore, isFirebaseInitialized } from "@/lib/firebase";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 
-// Import generated assets
 import heroBg from "@assets/generated_images/abstract_neon_sound_wave_visualization.png";
-import orbImage from "@assets/generated_images/glowing_ai_voice_interface_orb.png";
 
 export default function Home() {
-  const [displayText, setDisplayText] = useState("Click the microphone to speak or type below...");
-  const [aiResponse, setAiResponse] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [firebaseReady, setFirebaseReady] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [textInput, setTextInput] = useState("");
-  const [useTextInput, setUseTextInput] = useState(false);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const firebaseInitialized = useRef(false);
+  const [savedTranscripts, setSavedTranscripts] = useState<string[]>([]);
 
   const {
     isListening,
@@ -39,518 +21,139 @@ export default function Home() {
     resetTranscript,
   } = useSpeechRecognition();
 
-  const { data: interactions = [], isLoading } = useQuery({
-    queryKey: ["voice-interactions"],
-    queryFn: () => getVoiceInteractions(),
-  });
+  const currentText = transcript + interimTranscript;
 
-  const { data: firebaseStatus } = useQuery({
-    queryKey: ["firebase-config"],
-    queryFn: checkFirebaseConfig,
-  });
-
-  const { data: geminiStatus } = useQuery({
-    queryKey: ["gemini-config"],
-    queryFn: checkGeminiConfig,
-  });
-
-  // Initialize Firebase when config is available
-  useEffect(() => {
-    if (firebaseStatus?.available && firebaseStatus.config && !firebaseInitialized.current) {
-      try {
-        initializeFirebase(firebaseStatus.config);
-        firebaseInitialized.current = true;
-        setFirebaseReady(true);
-      } catch (error) {
-        console.error("Failed to initialize Firebase:", error);
-      }
-    }
-  }, [firebaseStatus]);
-
-  // Update display text when listening
-  useEffect(() => {
-    if (isListening) {
-      const currentText = transcript + interimTranscript;
-      setDisplayText(currentText || "Listening...");
-    }
-  }, [isListening, transcript, interimTranscript]);
-
-  const createInteractionMutation = useMutation({
-    mutationFn: createVoiceInteraction,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["voice-interactions"] });
-      toast({
-        title: "Success",
-        description: "Voice interaction saved!",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to save voice interaction",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const processTranscript = async (text: string) => {
-    if (!text.trim()) {
-      setDisplayText("No speech detected. Try again.");
-      return;
-    }
-
-    setIsProcessing(true);
-    setDisplayText(`You said: "${text}"`);
-    setAiResponse("Processing with AI...");
-
-    try {
-      // Process with Gemini AI
-      const result = await processWithGemini(text);
-      const response = result.response;
-      setAiResponse(response);
-
-      let firebaseDocId: string | null = null;
-
-      // Save to Firestore if available
-      if (firebaseReady && isFirebaseInitialized()) {
-        try {
-          firebaseDocId = await saveToFirestore("voice_interactions", {
-            transcript: text,
-            response,
-            userId: "demo-user",
-          });
-          toast({
-            title: "Saved to Firestore",
-            description: `Document ID: ${firebaseDocId.substring(0, 8)}...`,
-          });
-        } catch (error) {
-          console.error("Firestore error:", error);
-        }
-      }
-
-      // Save to backend database
-      await createInteractionMutation.mutateAsync({
-        transcript: text,
-        response,
-        userId: "demo-user",
-        firebaseDocId,
-        metadata: null,
-      });
-    } catch (error: any) {
-      console.error("Processing error:", error);
-      setAiResponse("Sorry, I couldn't process that. Please try again.");
-      toast({
-        title: "Processing Error",
-        description: error.message || "Failed to process with AI",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const toggleListening = async () => {
+  const toggleListening = () => {
     if (isListening) {
       stopListening();
-      // Process the transcript after stopping
-      const finalTranscript = transcript;
-      if (finalTranscript) {
-        await processTranscript(finalTranscript);
-      } else {
-        setDisplayText("Click the microphone to speak or type below...");
+      if (transcript.trim()) {
+        setSavedTranscripts(prev => [transcript.trim(), ...prev]);
       }
       resetTranscript();
     } else {
-      setDisplayText("Listening...");
-      setAiResponse("");
+      resetTranscript();
       startListening();
     }
   };
 
-  const handleTextSubmit = async () => {
-    if (!textInput.trim()) return;
-    
-    const text = textInput.trim();
-    setTextInput("");
-    await processTranscript(text);
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleTextSubmit();
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background flex flex-col overflow-x-hidden">
-      {/* Navbar */}
-      <nav className="fixed w-full z-50 border-b border-white/10 bg-background/80 backdrop-blur-md">
-        <div className="container mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-              <div className="w-4 h-4 bg-white rounded-full animate-pulse" />
-            </div>
-            <span className="text-xl font-heading font-bold tracking-tight text-white">Vocalize AI</span>
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Background */}
+      <div className="fixed inset-0 z-0">
+        <div className="absolute inset-0 bg-gradient-to-b from-background/90 via-background/95 to-background z-10" />
+        <img 
+          src={heroBg} 
+          alt="Background" 
+          className="w-full h-full object-cover opacity-30"
+        />
+      </div>
+
+      {/* Main Content */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-12">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-2xl"
+        >
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 text-foreground">
+              Voice to Text
+            </h1>
+            <p className="text-lg text-muted-foreground">
+              Click the microphone and start speaking
+            </p>
           </div>
 
-          {/* Desktop Nav */}
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Features</a>
-            <a href="#demo" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Live Demo</a>
-            <a href="#pricing" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Pricing</a>
-            <Button variant="outline" className="border-primary/20 hover:bg-primary/10 hover:text-primary">Log in</Button>
-            <Button className="bg-primary text-primary-foreground hover:bg-primary/90">Get Started</Button>
-          </div>
+          {/* Voice Input Card */}
+          <Card className="bg-card/80 backdrop-blur-md border-border/50 mb-8">
+            <CardContent className="p-8">
+              {/* Microphone Button */}
+              <div className="flex flex-col items-center">
+                <Button
+                  size="lg"
+                  onClick={toggleListening}
+                  disabled={!isSpeechSupported}
+                  data-testid="button-mic-toggle"
+                  className={`h-24 w-24 rounded-full p-0 transition-all duration-300 ${
+                    isListening 
+                      ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_40px_rgba(239,68,68,0.5)] animate-pulse' 
+                      : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
+                  }`}
+                >
+                  {isListening ? (
+                    <MicOff className="w-10 h-10 text-white" />
+                  ) : (
+                    <Mic className="w-10 h-10 text-primary-foreground" />
+                  )}
+                </Button>
 
-          {/* Mobile Nav Toggle */}
-          <div className="md:hidden">
-            <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} data-testid="button-mobile-menu">
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </Button>
-          </div>
-        </div>
-        
-        {/* Mobile Menu Overlay */}
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="md:hidden bg-card/95 backdrop-blur-lg border-b border-white/10"
-            >
-              <div className="container mx-auto px-6 py-6 flex flex-col gap-4">
-                <a href="#features" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Features</a>
-                <a href="#demo" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Live Demo</a>
-                <a href="#pricing" onClick={() => setMobileMenuOpen(false)} className="text-lg font-medium py-2 hover:text-primary transition-colors">Pricing</a>
-                <div className="flex flex-col gap-3 mt-2 pt-4 border-t border-white/10">
-                  <Button variant="outline" className="w-full">Log in</Button>
-                  <Button className="w-full">Get Started</Button>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {isListening ? "Listening... Click to stop" : "Click to start speaking"}
+                </p>
+              </div>
+
+              {/* Current Speech Display */}
+              <div className="mt-8 min-h-[120px] p-6 bg-background/50 rounded-xl border border-border/30">
+                <div className="flex items-start gap-3">
+                  <Volume2 className={`w-5 h-5 mt-1 flex-shrink-0 ${isListening ? 'text-primary animate-pulse' : 'text-muted-foreground'}`} />
+                  <div className="flex-1">
+                    {currentText ? (
+                      <p className="text-lg text-foreground leading-relaxed" data-testid="text-current-speech">
+                        {currentText}
+                        {isListening && <span className="animate-pulse text-primary">|</span>}
+                      </p>
+                    ) : (
+                      <p className="text-lg text-muted-foreground italic" data-testid="text-placeholder">
+                        {isListening ? "Start speaking..." : "Your speech will appear here"}
+                      </p>
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              {/* Error Display */}
+              {speechError && (
+                <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-xl">
+                  <p className="text-sm text-destructive" data-testid="text-error">
+                    {speechError}
+                  </p>
+                </div>
+              )}
+
+              {/* Browser Support Warning */}
+              {!isSpeechSupported && (
+                <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
+                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                    Speech recognition is not supported in this browser. Please try Chrome or Edge.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Saved Transcripts */}
+          {savedTranscripts.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <h2 className="text-xl font-semibold mb-4 text-foreground">Previous Recordings</h2>
+              <div className="space-y-3">
+                {savedTranscripts.map((text, index) => (
+                  <Card key={index} className="bg-card/60 backdrop-blur-sm border-border/30" data-testid={`card-transcript-${index}`}>
+                    <CardContent className="p-4">
+                      <p className="text-foreground" data-testid={`text-saved-transcript-${index}`}>
+                        "{text}"
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </motion.div>
           )}
-        </AnimatePresence>
-      </nav>
-
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 md:pt-48 md:pb-32 overflow-hidden">
-        {/* Background */}
-        <div className="absolute inset-0 z-0">
-          <div className="absolute inset-0 bg-gradient-to-b from-background/80 via-background/90 to-background z-10" />
-          <img 
-            src={heroBg} 
-            alt="Sound Wave Background" 
-            className="w-full h-full object-cover opacity-60"
-          />
-        </div>
-
-        <div className="container mx-auto px-6 relative z-20">
-          <div className="flex flex-col md:flex-row items-center gap-12 lg:gap-20">
-            {/* Text Content */}
-            <div className="flex-1 text-center md:text-left">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium mb-6">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                  </span>
-                  Powered by Firebase & AI
-                </div>
-                <h1 className="text-4xl md:text-6xl lg:text-7xl font-heading font-bold leading-tight mb-6">
-                  Your Voice, <br />
-                  <span className="text-gradient">Amplified by Intelligence.</span>
-                </h1>
-                <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-xl mx-auto md:mx-0 leading-relaxed">
-                  Control your digital world with natural conversation. Our advanced voice assistant integrates seamlessly with your data.
-                </p>
-                <div className="flex flex-col sm:flex-row items-center justify-center md:justify-start gap-4">
-                  <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 h-12 px-8 text-base shadow-[0_0_20px_-5px_hsla(var(--primary)/0.5)] w-full sm:w-auto">
-                    Start Speaking <Mic className="w-4 h-4 ml-2" />
-                  </Button>
-                  <Button variant="outline" size="lg" className="border-white/10 hover:bg-white/5 h-12 px-8 text-base w-full sm:w-auto">
-                    Watch Demo <Play className="w-4 h-4 ml-2" />
-                  </Button>
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Visual Content */}
-            <div className="flex-1 flex justify-center relative">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.8, delay: 0.2 }}
-                className="relative w-[300px] h-[300px] md:w-[500px] md:h-[500px]"
-              >
-                <div className="absolute inset-0 bg-primary/20 blur-[100px] rounded-full" />
-                <img 
-                  src={orbImage} 
-                  alt="AI Interface" 
-                  className="relative z-10 w-full h-full object-contain drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]"
-                />
-                
-                {/* Floating Elements */}
-                <motion.div 
-                  animate={{ y: [0, -10, 0] }}
-                  transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-                  className="absolute -top-4 -right-4 p-4 glass-panel rounded-2xl z-20 hidden md:block"
-                >
-                  <Database className="w-6 h-6 text-accent mb-2" />
-                  <div className="text-xs font-mono text-muted-foreground">Firestore Connected</div>
-                  <div className="text-sm font-bold">Syncing Data...</div>
-                </motion.div>
-
-                <motion.div 
-                  animate={{ y: [0, 10, 0] }}
-                  transition={{ repeat: Infinity, duration: 5, ease: "easeInOut", delay: 1 }}
-                  className="absolute bottom-10 -left-8 p-4 glass-panel rounded-2xl z-20 hidden md:block"
-                >
-                  <VoiceVisualizer isListening={true} />
-                  <div className="text-xs font-mono text-center mt-2 text-primary">Processing Voice</div>
-                </motion.div>
-              </motion.div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features Grid */}
-      <section id="features" className="py-24 bg-background relative">
-        <div className="container mx-auto px-6">
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-3xl md:text-4xl font-heading font-bold mb-4">Professional Grade Capabilities</h2>
-            <p className="text-muted-foreground">Built for enterprise scale with the speed of a startup. Security, speed, and reliability included.</p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            {[
-              {
-                icon: <Zap className="w-6 h-6 text-accent" />,
-                title: "Lightning Fast",
-                desc: "Real-time processing with <50ms latency for natural, fluid conversations."
-              },
-              {
-                icon: <Shield className="w-6 h-6 text-primary" />,
-                title: "Enterprise Secure",
-                desc: "End-to-end encryption ensures your voice data remains private and secure."
-              },
-              {
-                icon: <Database className="w-6 h-6 text-purple-400" />,
-                title: "Firebase Integration",
-                desc: "Seamlessly connect with Cloud Firestore for real-time data persistence."
-              }
-            ].map((feature, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-              >
-                <Card className="bg-card/50 border-white/5 backdrop-blur-sm hover:bg-card/80 transition-colors group">
-                  <CardContent className="p-8">
-                    <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
-                      {feature.icon}
-                    </div>
-                    <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
-                    <p className="text-muted-foreground leading-relaxed">{feature.desc}</p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Interactive Demo Section */}
-      <section id="demo" className="py-24 relative overflow-hidden">
-        <div className="absolute inset-0 bg-secondary/20 skew-y-3 transform origin-top-left scale-110" />
-        
-        <div className="container mx-auto px-6 relative z-10">
-          <div className="max-w-4xl mx-auto">
-            <div className="glass-panel rounded-3xl p-8 md:p-12 border border-white/10 shadow-2xl">
-              <div className="flex flex-col items-center text-center">
-                <h2 className="text-3xl font-heading font-bold mb-4">Try it Live</h2>
-                
-                <div className="flex flex-wrap items-center justify-center gap-4 mb-6 text-sm">
-                  {firebaseStatus && (
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className={`w-4 h-4 ${firebaseStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
-                      <span className="text-muted-foreground">{firebaseStatus.message}</span>
-                    </div>
-                  )}
-                  {geminiStatus && (
-                    <div className="flex items-center gap-2">
-                      <Brain className={`w-4 h-4 ${geminiStatus.available ? 'text-green-400' : 'text-yellow-400'}`} />
-                      <span className="text-muted-foreground">{geminiStatus.message}</span>
-                    </div>
-                  )}
-                  {!isSpeechSupported && (
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-400" />
-                      <span className="text-muted-foreground">Speech not supported in this browser</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="w-full max-w-md bg-black/40 rounded-2xl p-6 mb-8 border border-white/5 min-h-[160px] flex flex-col items-center justify-center" data-testid="demo-output">
-                  <VoiceVisualizer isListening={isListening || isProcessing} />
-                  <p className="mt-4 text-lg font-medium text-white/90 transition-all text-center" data-testid="text-demo-response">
-                    {displayText}
-                  </p>
-                  {aiResponse && (
-                    <div className="mt-4 p-4 bg-primary/10 rounded-xl border border-primary/20 w-full">
-                      <p className="text-sm text-primary font-medium mb-1">AI Response:</p>
-                      <p className="text-sm text-white/80" data-testid="text-ai-response">{aiResponse}</p>
-                    </div>
-                  )}
-                </div>
-
-                {speechError && (
-                  <div className="w-full max-w-md mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-                    <p className="text-sm text-red-400 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                      {speechError}
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-4 mb-6">
-                  <Button
-                    size="lg"
-                    onClick={toggleListening}
-                    data-testid="button-mic-toggle"
-                    disabled={isProcessing || createInteractionMutation.isPending}
-                    className={`h-16 w-16 rounded-full p-0 transition-all duration-300 ${
-                      isListening 
-                        ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
-                        : isProcessing
-                          ? 'bg-yellow-500 hover:bg-yellow-600 shadow-[0_0_30px_rgba(234,179,8,0.4)]'
-                          : 'bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(56,189,248,0.4)]'
-                    }`}
-                  >
-                    {isListening ? (
-                      <div className="w-4 h-4 bg-white rounded-sm" />
-                    ) : isProcessing ? (
-                      <Brain className="w-8 h-8 text-white animate-pulse" />
-                    ) : (
-                      <Mic className="w-8 h-8 text-primary-foreground" />
-                    )}
-                  </Button>
-                </div>
-
-                <p className="mb-4 text-sm text-muted-foreground">
-                  {isListening ? "Click to stop and process" : isProcessing ? "Processing..." : "Tap microphone or type below"}
-                </p>
-
-                <div className="w-full max-w-md flex gap-2">
-                  <Input
-                    type="text"
-                    placeholder="Type your message here..."
-                    value={textInput}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    onKeyDown={handleKeyPress}
-                    disabled={isProcessing || isListening}
-                    className="flex-1 bg-black/30 border-white/10 text-white placeholder:text-white/40"
-                    data-testid="input-text-message"
-                  />
-                  <Button
-                    onClick={handleTextSubmit}
-                    disabled={isProcessing || isListening || !textInput.trim()}
-                    data-testid="button-send-text"
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Interaction History Section */}
-      <section className="py-24 bg-background">
-        <div className="container mx-auto px-6">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center gap-3 mb-8">
-              <History className="w-8 h-8 text-primary" />
-              <h2 className="text-3xl font-heading font-bold">Interaction History</h2>
-            </div>
-            
-            {isLoading ? (
-              <div className="text-center py-12 text-muted-foreground">Loading interactions...</div>
-            ) : interactions.length === 0 ? (
-              <div className="text-center py-12 glass-panel rounded-2xl border border-white/5">
-                <Database className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <p className="text-muted-foreground">No interactions yet. Try the demo above!</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {interactions.map((interaction) => (
-                  <motion.div
-                    key={interaction.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    data-testid={`card-interaction-${interaction.id}`}
-                  >
-                    <Card className="bg-card/30 border-white/5 backdrop-blur-sm hover:bg-card/50 transition-colors">
-                      <CardContent className="p-6">
-                        <div className="flex items-start gap-4">
-                          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                            <Mic className="w-5 h-5 text-primary" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-start justify-between gap-4 mb-2">
-                              <p className="font-medium" data-testid={`text-transcript-${interaction.id}`}>"{interaction.transcript}"</p>
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                {format(new Date(interaction.createdAt), "MMM d, h:mm a")}
-                              </span>
-                            </div>
-                            <p className="text-muted-foreground text-sm" data-testid={`text-response-${interaction.id}`}>
-                              {interaction.response}
-                            </p>
-                            {interaction.firebaseDocId && (
-                              <div className="mt-2 text-xs text-accent font-mono">
-                                Firebase Doc: {interaction.firebaseDocId}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="py-12 border-t border-white/10 bg-background">
-        <div className="container mx-auto px-6">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-primary" />
-              <span className="font-heading font-bold text-lg">Vocalize AI</span>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              © 2024 Vocalize AI. All rights reserved.
-            </div>
-            <div className="flex gap-6">
-              <a href="#" className="text-muted-foreground hover:text-white transition-colors">Privacy</a>
-              <a href="#" className="text-muted-foreground hover:text-white transition-colors">Terms</a>
-              <a href="#" className="text-muted-foreground hover:text-white transition-colors">Contact</a>
-            </div>
-          </div>
-        </div>
-      </footer>
+        </motion.div>
+      </main>
     </div>
   );
 }
