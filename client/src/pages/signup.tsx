@@ -19,6 +19,11 @@ export default function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  const getRedirectPath = () => {
+    const pendingTranscript = localStorage.getItem('pendingTranscript');
+    return pendingTranscript ? "/transcribe" : "/";
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
@@ -35,7 +40,7 @@ export default function SignUp() {
 
     try {
       await signUp(email, password, fullName);
-      setLocation("/");
+      setLocation(getRedirectPath());
     } catch {
     }
   };
@@ -43,7 +48,7 @@ export default function SignUp() {
   const handleGoogleSignIn = async () => {
     try {
       await googleSignIn();
-      setLocation("/");
+      setLocation(getRedirectPath());
     } catch {
     }
   };

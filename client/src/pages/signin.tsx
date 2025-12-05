@@ -16,11 +16,16 @@ export default function SignIn() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
+  const getRedirectPath = () => {
+    const pendingTranscript = localStorage.getItem('pendingTranscript');
+    return pendingTranscript ? "/transcribe" : "/";
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await signIn(email, password);
-      setLocation("/");
+      setLocation(getRedirectPath());
     } catch {
     }
   };
@@ -28,7 +33,7 @@ export default function SignIn() {
   const handleGoogleSignIn = async () => {
     try {
       await googleSignIn();
-      setLocation("/");
+      setLocation(getRedirectPath());
     } catch {
     }
   };

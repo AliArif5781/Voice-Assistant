@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
@@ -54,6 +54,46 @@ export default function Transcribe() {
     stopRecording,
     resetRecording,
   } = useAudioRecorder();
+
+  useEffect(() => {
+    const savePendingTranscript = async () => {
+      const pendingTranscript = localStorage.getItem('pendingTranscript');
+      
+      if (pendingTranscript && user && firebaseConfigured) {
+        setIsSavingToCloud(true);
+        try {
+          await saveToFirestore('transcriptions', {
+            text: pendingTranscript,
+            userId: user.uid,
+            userEmail: user.email,
+            displayName: user.displayName || null,
+            createdAt: new Date().toISOString(),
+          });
+          
+          localStorage.removeItem('pendingTranscript');
+          
+          toast({
+            title: "Saved",
+            description: "Your transcription has been saved to your account.",
+          });
+          setSavedTranscripts(prev => [{ text: pendingTranscript, savedToCloud: true }, ...prev]);
+        } catch (err: any) {
+          console.error('Failed to save pending transcript:', err);
+          toast({
+            title: "Save Failed",
+            description: err.message || "Failed to save. Please try again.",
+            variant: "destructive",
+          });
+          setCurrentTranscript(pendingTranscript);
+          localStorage.removeItem('pendingTranscript');
+        } finally {
+          setIsSavingToCloud(false);
+        }
+      }
+    };
+    
+    savePendingTranscript();
+  }, [user, firebaseConfigured, toast]);
 
   const handleToggleRecording = async () => {
     if (isRecording) {
@@ -123,10 +163,20 @@ export default function Transcribe() {
   const handleSave = async () => {
     if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
     
+    if (!user) {
+      localStorage.setItem('pendingTranscript', currentTranscript);
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save your transcription.",
+      });
+      setLocation("/signin");
+      return;
+    }
+    
     setIsSavingToCloud(true);
     
     try {
-      if (user && firebaseConfigured) {
+      if (firebaseConfigured) {
         await saveToFirestore('transcriptions', {
           text: currentTranscript,
           userId: user.uid,
@@ -140,14 +190,14 @@ export default function Transcribe() {
           description: "Your transcription has been saved to your account.",
         });
         setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: true }, ...prev]);
+        setCurrentTranscript("");
       } else {
         toast({
-          title: "Saved Locally",
-          description: user ? "Saved to your device." : "Sign in to save to the cloud.",
+          title: "Error",
+          description: "Firebase is not configured. Please contact support.",
+          variant: "destructive",
         });
-        setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
       }
-      setCurrentTranscript("");
     } catch (err: any) {
       console.error('Failed to save:', err);
       toast({
@@ -431,11 +481,6 @@ export default function Transcribe() {
                             <Trash2 className="w-4 h-4" />
                             Delete
                           </Button>
-                          {!user && (
-                            <p className="text-xs text-muted-foreground">
-                              Sign in to save to cloud
-                            </p>
-                          )}
                         </div>
                       )}
                       <p className="text-xs text-muted-foreground mt-2 ml-11">Review your transcription above</p>
