@@ -120,48 +120,51 @@ export default function Transcribe() {
     }
   };
 
-  const handleSaveToCloud = async () => {
+  const handleSave = async () => {
     if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
     
     setIsSavingToCloud(true);
     
     try {
-      if (firebaseConfigured) {
+      if (user && firebaseConfigured) {
         await saveToFirestore('transcriptions', {
           text: currentTranscript,
-          userId: user?.uid || 'anonymous',
-          userEmail: user?.email || null,
+          userId: user.uid,
+          userEmail: user.email,
+          displayName: user.displayName || null,
+          createdAt: new Date().toISOString(),
         });
         
         toast({
-          title: "Saved to Cloud",
-          description: "Your transcription has been saved to Firestore.",
+          title: "Saved",
+          description: "Your transcription has been saved to your account.",
         });
+        setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: true }, ...prev]);
+      } else {
+        toast({
+          title: "Saved Locally",
+          description: user ? "Saved to your device." : "Sign in to save to the cloud.",
+        });
+        setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
       }
-      
-      setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: firebaseConfigured }, ...prev]);
       setCurrentTranscript("");
     } catch (err: any) {
-      console.error('Failed to save to cloud:', err);
+      console.error('Failed to save:', err);
       toast({
         title: "Save Failed",
-        description: err.message || "Failed to save to Firestore. Saved locally instead.",
+        description: err.message || "Failed to save. Please try again.",
         variant: "destructive",
       });
-      setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
-      setCurrentTranscript("");
     } finally {
       setIsSavingToCloud(false);
     }
   };
 
-  const handleSaveLocally = () => {
-    if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
-    setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
+  const handleDiscard = () => {
     setCurrentTranscript("");
     toast({
-      title: "Saved Locally",
-      description: "Your transcription has been saved locally.",
+      title: "Discarded",
+      description: "Transcription has been removed.",
     });
   };
 
@@ -407,32 +410,30 @@ export default function Transcribe() {
                       {!currentTranscript.includes("No speech detected") && (
                         <div className="flex items-center gap-2 mt-4 ml-11">
                           <Button
-                            onClick={handleSaveToCloud}
-                            disabled={isSavingToCloud || !firebaseConfigured}
+                            onClick={handleSave}
+                            disabled={isSavingToCloud}
                             className="gap-2"
-                            data-testid="button-save-to-cloud"
+                            data-testid="button-save"
                           >
                             {isSavingToCloud ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : firebaseConfigured ? (
-                              <Cloud className="w-4 h-4" />
                             ) : (
-                              <CloudOff className="w-4 h-4" />
+                              <Check className="w-4 h-4" />
                             )}
-                            {isSavingToCloud ? "Saving..." : "Save to Cloud"}
+                            {isSavingToCloud ? "Saving..." : "Save"}
                           </Button>
                           <Button
                             variant="outline"
-                            onClick={handleSaveLocally}
-                            className="gap-2"
-                            data-testid="button-save-locally"
+                            onClick={handleDiscard}
+                            className="gap-2 text-destructive"
+                            data-testid="button-delete"
                           >
-                            <Check className="w-4 h-4" />
-                            Save Locally
+                            <Trash2 className="w-4 h-4" />
+                            Delete
                           </Button>
-                          {!firebaseConfigured && (
+                          {!user && (
                             <p className="text-xs text-muted-foreground">
-                              Firebase not configured
+                              Sign in to save to cloud
                             </p>
                           )}
                         </div>
