@@ -3,12 +3,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download
+  Waves, Copy, Check, Trash2, Download, Cloud, CloudOff
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
+import { saveToFirestore, isFirebaseConfigured } from "@/lib/firebase";
+import { useToast } from "@/hooks/use-toast";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
 
@@ -36,11 +38,14 @@ function VoiceWaveform({ isActive }: { isActive: boolean }) {
 export default function Transcribe() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
-  const [savedTranscripts, setSavedTranscripts] = useState<string[]>([]);
+  const { toast } = useToast();
+  const [savedTranscripts, setSavedTranscripts] = useState<{ text: string; savedToCloud: boolean }[]>([]);
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const firebaseConfigured = isFirebaseConfigured();
 
   const {
     isRecording,
@@ -86,7 +91,6 @@ export default function Transcribe() {
               
               if (transcript && transcript !== "No speech detected.") {
                 setCurrentTranscript(transcript);
-                setSavedTranscripts(prev => [transcript, ...prev]);
               } else {
                 setCurrentTranscript("No speech detected. Try speaking louder or closer to the microphone.");
               }
@@ -116,6 +120,51 @@ export default function Transcribe() {
     }
   };
 
+  const handleSaveToCloud = async () => {
+    if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
+    
+    setIsSavingToCloud(true);
+    
+    try {
+      if (firebaseConfigured) {
+        await saveToFirestore('transcriptions', {
+          text: currentTranscript,
+          userId: user?.uid || 'anonymous',
+          userEmail: user?.email || null,
+        });
+        
+        toast({
+          title: "Saved to Cloud",
+          description: "Your transcription has been saved to Firestore.",
+        });
+      }
+      
+      setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: firebaseConfigured }, ...prev]);
+      setCurrentTranscript("");
+    } catch (err: any) {
+      console.error('Failed to save to cloud:', err);
+      toast({
+        title: "Save Failed",
+        description: err.message || "Failed to save to Firestore. Saved locally instead.",
+        variant: "destructive",
+      });
+      setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
+      setCurrentTranscript("");
+    } finally {
+      setIsSavingToCloud(false);
+    }
+  };
+
+  const handleSaveLocally = () => {
+    if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
+    setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: false }, ...prev]);
+    setCurrentTranscript("");
+    toast({
+      title: "Saved Locally",
+      description: "Your transcription has been saved locally.",
+    });
+  };
+
   const handleCopy = async (text: string, index: number) => {
     await navigator.clipboard.writeText(text);
     setCopiedIndex(index);
@@ -132,7 +181,7 @@ export default function Transcribe() {
   };
 
   const handleExport = () => {
-    const content = savedTranscripts.join('\n\n---\n\n');
+    const content = savedTranscripts.map(t => t.text).join('\n\n---\n\n');
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -354,7 +403,41 @@ export default function Transcribe() {
                           )}
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-2 ml-11">Just now</p>
+                      
+                      {!currentTranscript.includes("No speech detected") && (
+                        <div className="flex items-center gap-2 mt-4 ml-11">
+                          <Button
+                            onClick={handleSaveToCloud}
+                            disabled={isSavingToCloud || !firebaseConfigured}
+                            className="gap-2"
+                            data-testid="button-save-to-cloud"
+                          >
+                            {isSavingToCloud ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : firebaseConfigured ? (
+                              <Cloud className="w-4 h-4" />
+                            ) : (
+                              <CloudOff className="w-4 h-4" />
+                            )}
+                            {isSavingToCloud ? "Saving..." : "Save to Cloud"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={handleSaveLocally}
+                            className="gap-2"
+                            data-testid="button-save-locally"
+                          >
+                            <Check className="w-4 h-4" />
+                            Save Locally
+                          </Button>
+                          {!firebaseConfigured && (
+                            <p className="text-xs text-muted-foreground">
+                              Firebase not configured
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-2 ml-11">Review your transcription above</p>
                     </motion.div>
                   )}
 
@@ -376,9 +459,9 @@ export default function Transcribe() {
                     </motion.div>
                   ) : (
                     <div className="space-y-3">
-                      {savedTranscripts.map((text, index) => (
+                      {savedTranscripts.map((item, index) => (
                         <motion.div
-                          key={`${index}-${text.slice(0, 20)}`}
+                          key={`${index}-${item.text.slice(0, 20)}`}
                           initial={{ opacity: 0, x: -10 }}
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: 10 }}
@@ -386,14 +469,29 @@ export default function Transcribe() {
                           className="p-4 bg-background/50 border border-border/30 rounded-lg group"
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <p className="text-foreground text-sm leading-relaxed flex-1" data-testid={`text-transcript-${index}`}>
-                              {text}
-                            </p>
+                            <div className="flex-1">
+                              <p className="text-foreground text-sm leading-relaxed" data-testid={`text-transcript-${index}`}>
+                                {item.text}
+                              </p>
+                              <div className="flex items-center gap-2 mt-2">
+                                {item.savedToCloud ? (
+                                  <span className="inline-flex items-center gap-1 text-xs text-green-500">
+                                    <Cloud className="w-3 h-3" />
+                                    Saved to Cloud
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                    <CloudOff className="w-3 h-3" />
+                                    Local only
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => handleCopy(text, index)}
+                                onClick={() => handleCopy(item.text, index)}
                                 className="h-8 w-8"
                               >
                                 {copiedIndex === index ? (
