@@ -1,11 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, Sparkles, Waves, AudioWaveform,
   Zap, Shield, Globe, ArrowRight, ChevronDown, Brain, Clock, FileText,
-  CheckCircle2, Star, Play, Headphones, MessageSquare
+  CheckCircle2, Star, Play, Headphones, MessageSquare, User, LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 
@@ -69,6 +78,8 @@ function VoiceWaveform({ isActive }: { isActive: boolean }) {
 
 function Navigation() {
   const [isScrolled, setIsScrolled] = useState(false);
+  const [, setLocation] = useLocation();
+  const { user, logout, loading } = useAuth();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -85,6 +96,13 @@ function Navigation() {
 
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+    }
   };
 
   return (
@@ -122,13 +140,64 @@ function Navigation() {
             ))}
           </div>
 
-          <Button 
-            onClick={() => scrollToSection('try-now')}
-            data-testid="nav-get-started"
-          >
-            Get Started
-            <ArrowRight className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {!loading && (
+              user ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-2">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+                        {user.photoURL ? (
+                          <img 
+                            src={user.photoURL} 
+                            alt="" 
+                            className="w-full h-full rounded-full object-cover"
+                          />
+                        ) : (
+                          <User className="w-4 h-4 text-white" />
+                        )}
+                      </div>
+                      <span className="hidden sm:inline text-sm">
+                        {user.displayName || user.email?.split('@')[0] || 'User'}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      {user.email}
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem 
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        handleLogout();
+                      }} 
+                      className="text-red-500 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => setLocation('/signin')}
+                  >
+                    Sign In
+                  </Button>
+                  <Button 
+                    size="sm"
+                    onClick={() => setLocation('/signup')}
+                  >
+                    Sign Up
+                  </Button>
+                </>
+              )
+            )}
+          </div>
         </div>
       </nav>
     </motion.header>
