@@ -204,7 +204,8 @@ function Navigation() {
   );
 }
 
-function HeroSection({ onTryNow }: { onTryNow: () => void }) {
+function HeroSection() {
+  const [, setLocation] = useLocation();
   return (
     <section className="relative min-h-screen flex items-center justify-center pt-20 pb-12 overflow-hidden">
       <div className="absolute inset-0 z-0">
@@ -252,7 +253,7 @@ function HeroSection({ onTryNow }: { onTryNow: () => void }) {
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
               <Button 
                 size="lg" 
-                onClick={onTryNow}
+                onClick={() => setLocation('/transcribe')}
                 data-testid="hero-try-now"
                 className="text-base"
               >
@@ -960,7 +961,7 @@ export default function Home() {
     <div className="min-h-screen bg-background overflow-x-hidden">
       <Navigation />
       
-      <HeroSection onTryNow={scrollToTryNow} />
+      <HeroSection />
       
       <FeaturesSection />
       

@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import SignIn from "@/pages/signin";
 import SignUp from "@/pages/signup";
+import Transcribe from "@/pages/transcribe";
 
 function Router() {
   return (
@@ -15,6 +16,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/signin" component={SignIn} />
       <Route path="/signup" component={SignUp} />
+      <Route path="/transcribe" component={Transcribe} />
       <Route component={NotFound} />
     </Switch>
   );
