@@ -66,3 +66,4 @@ waitForPort = 5000
 [agent]
 mockupState = "FULLSTACK"
 integrations = ["javascript_gemini:1.0.0"]
+expertMode = true
