@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
-import { Mail, Lock, Eye, EyeOff, Loader2, AudioWaveform } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AudioWaveform, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 export default function SignUp() {
   const [, setLocation] = useLocation();
   const { signUp, googleSignIn, error, loading, clearError } = useAuth();
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -33,7 +34,7 @@ export default function SignUp() {
     }
 
     try {
-      await signUp(email, password);
+      await signUp(email, password, fullName);
       setLocation("/");
     } catch {
     }
@@ -86,6 +87,22 @@ export default function SignUp() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="fullName">Full Name</Label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    id="fullName"
+                    type="text"
+                    placeholder="John Doe"
+                    value={fullName}
+                    onChange={(e) => { setFullName(e.target.value); setLocalError(null); }}
+                    className="pl-10"
+                    required
+                  />
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <div className="relative">

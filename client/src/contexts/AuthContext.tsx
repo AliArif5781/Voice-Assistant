@@ -16,7 +16,7 @@ interface AuthContextType {
   error: string | null;
   isConfigured: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, displayName?: string) => Promise<void>;
   googleSignIn: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
@@ -59,11 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (email: string, password: string, displayName?: string) => {
     try {
       setError(null);
       setLoading(true);
-      await signUpWithEmail(email, password);
+      await signUpWithEmail(email, password, displayName);
     } catch (err: any) {
       setError(getErrorMessage(err.code));
       throw err;

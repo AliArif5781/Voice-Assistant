@@ -8,6 +8,7 @@ import {
   signOut as firebaseSignOut,
   GoogleAuthProvider,
   onAuthStateChanged,
+  updateProfile,
   type Auth,
   type User
 } from 'firebase/auth';
@@ -48,12 +49,18 @@ export async function signInWithEmail(email: string, password: string) {
   return signInWithEmailAndPassword(authInstance, email, password);
 }
 
-export async function signUpWithEmail(email: string, password: string) {
+export async function signUpWithEmail(email: string, password: string, displayName?: string) {
   const authInstance = getFirebaseAuth();
   if (!authInstance) {
     throw new Error('Firebase not initialized');
   }
-  return createUserWithEmailAndPassword(authInstance, email, password);
+  const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
+  
+  if (displayName && userCredential.user) {
+    await updateProfile(userCredential.user, { displayName });
+  }
+  
+  return userCredential;
 }
 
 export async function signInWithGoogle() {
