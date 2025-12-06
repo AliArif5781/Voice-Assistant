@@ -1,18 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X
+  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X, Bell, BellRing, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveToFirestore, isFirebaseConfigured, getUserTranscriptions, updateFirestoreDoc, deleteFirestoreDoc } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
 
@@ -21,6 +25,8 @@ interface TranscriptItem {
   text: string;
   savedToCloud: boolean;
   completed: boolean;
+  reminderAt?: string | null;
+  reminderFired?: boolean;
 }
 
 function VoiceWaveform({ isActive }: { isActive: boolean }) {
@@ -57,6 +63,12 @@ export default function Transcribe() {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [reminderItemId, setReminderItemId] = useState<string | null>(null);
+  const [reminderDate, setReminderDate] = useState<Date | undefined>(undefined);
+  const [reminderHour, setReminderHour] = useState("12");
+  const [reminderMinute, setReminderMinute] = useState("00");
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const reminderTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const firebaseConfigured = isFirebaseConfigured();
 
   const {
@@ -82,6 +94,8 @@ export default function Transcribe() {
           text: doc.text || "",
           savedToCloud: true,
           completed: doc.completed || false,
+          reminderAt: doc.reminderAt || null,
+          reminderFired: doc.reminderFired || false,
         }));
         setSavedTranscripts(items);
       } catch (err: any) {
@@ -371,6 +385,153 @@ export default function Transcribe() {
         variant: "destructive",
       });
     }
+  };
+
+  const fireReminder = useCallback((item: TranscriptItem) => {
+    toast({
+      title: "Reminder",
+      description: item.text.length > 100 ? item.text.substring(0, 100) + "..." : item.text,
+      duration: 10000,
+    });
+
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("Reminder", {
+        body: item.text.length > 100 ? item.text.substring(0, 100) + "..." : item.text,
+        icon: "/favicon.ico",
+      });
+    }
+
+    setSavedTranscripts(prev => prev.map(t => 
+      t.id === item.id ? { ...t, reminderFired: true } : t
+    ));
+    updateFirestoreDoc('transcriptions', item.id, { reminderFired: true }).catch(console.error);
+  }, [toast]);
+
+  const scheduleReminders = useCallback((transcripts: TranscriptItem[]) => {
+    reminderTimersRef.current.forEach((timer) => clearTimeout(timer));
+    reminderTimersRef.current.clear();
+
+    transcripts.forEach(item => {
+      if (item.reminderAt && !item.reminderFired && !item.completed) {
+        const reminderTime = new Date(item.reminderAt).getTime();
+        const now = Date.now();
+        const delay = reminderTime - now;
+
+        if (delay <= 0) {
+          fireReminder(item);
+        } else {
+          const timer = setTimeout(() => fireReminder(item), delay);
+          reminderTimersRef.current.set(item.id, timer);
+        }
+      }
+    });
+  }, [fireReminder]);
+
+  useEffect(() => {
+    if (savedTranscripts.length > 0) {
+      scheduleReminders(savedTranscripts);
+    }
+    return () => {
+      reminderTimersRef.current.forEach((timer) => clearTimeout(timer));
+    };
+  }, [savedTranscripts, scheduleReminders]);
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const handleOpenReminder = (itemId: string, existingReminder?: string | null) => {
+    setReminderItemId(itemId);
+    if (existingReminder) {
+      const date = new Date(existingReminder);
+      setReminderDate(date);
+      setReminderHour(date.getHours().toString().padStart(2, '0'));
+      setReminderMinute(date.getMinutes().toString().padStart(2, '0'));
+    } else {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(9, 0, 0, 0);
+      setReminderDate(tomorrow);
+      setReminderHour("09");
+      setReminderMinute("00");
+    }
+    setReminderOpen(true);
+  };
+
+  const handleSetReminder = async () => {
+    if (!reminderItemId || !reminderDate) return;
+
+    const reminderDateTime = new Date(reminderDate);
+    reminderDateTime.setHours(parseInt(reminderHour), parseInt(reminderMinute), 0, 0);
+
+    if (reminderDateTime <= new Date()) {
+      toast({
+        title: "Invalid Time",
+        description: "Please select a future date and time.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reminderAt = reminderDateTime.toISOString();
+
+    setSavedTranscripts(prev => prev.map(t => 
+      t.id === reminderItemId ? { ...t, reminderAt, reminderFired: false } : t
+    ));
+
+    try {
+      await updateFirestoreDoc('transcriptions', reminderItemId, { 
+        reminderAt, 
+        reminderFired: false 
+      });
+      toast({
+        title: "Reminder Set",
+        description: `You'll be reminded on ${format(reminderDateTime, "PPP 'at' p")}`,
+      });
+    } catch (err: any) {
+      console.error('Failed to set reminder:', err);
+      toast({
+        title: "Failed",
+        description: "Could not set reminder. Please try again.",
+        variant: "destructive",
+      });
+    }
+
+    setReminderOpen(false);
+    setReminderItemId(null);
+  };
+
+  const handleRemoveReminder = async (itemId: string) => {
+    setSavedTranscripts(prev => prev.map(t => 
+      t.id === itemId ? { ...t, reminderAt: null, reminderFired: false } : t
+    ));
+
+    try {
+      await updateFirestoreDoc('transcriptions', itemId, { 
+        reminderAt: null, 
+        reminderFired: false 
+      });
+      toast({
+        title: "Reminder Removed",
+        description: "The reminder has been removed.",
+      });
+    } catch (err: any) {
+      console.error('Failed to remove reminder:', err);
+      toast({
+        title: "Failed",
+        description: "Could not remove reminder.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const generateTimeOptions = (type: 'hour' | 'minute') => {
+    if (type === 'hour') {
+      return Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+    }
+    return Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
   };
 
   const handleClearAll = async () => {
@@ -746,14 +907,20 @@ export default function Transcribe() {
                                 >
                                   {item.text}
                                 </p>
-                                {item.completed && (
-                                  <div className="flex items-center gap-2 mt-2">
+                                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                  {item.completed && (
                                     <span className="inline-flex items-center gap-1 text-xs text-green-500">
                                       <Check className="w-3 h-3" />
                                       Completed
                                     </span>
-                                  </div>
-                                )}
+                                  )}
+                                  {item.reminderAt && !item.reminderFired && (
+                                    <span className="inline-flex items-center gap-1 text-xs text-primary">
+                                      <Bell className="w-3 h-3" />
+                                      {format(new Date(item.reminderAt), "MMM d, h:mm a")}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 {!item.completed && (
@@ -765,6 +932,21 @@ export default function Transcribe() {
                                     data-testid={`button-edit-${index}`}
                                   >
                                     <Pencil className="w-3 h-3" />
+                                  </Button>
+                                )}
+                                {!item.completed && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleOpenReminder(item.id, item.reminderAt)}
+                                    className={`h-8 w-8 ${item.reminderAt && !item.reminderFired ? 'text-primary' : ''}`}
+                                    data-testid={`button-reminder-${index}`}
+                                  >
+                                    {item.reminderAt && !item.reminderFired ? (
+                                      <BellRing className="w-3 h-3" />
+                                    ) : (
+                                      <Bell className="w-3 h-3" />
+                                    )}
                                   </Button>
                                 )}
                                 <Button
@@ -802,6 +984,79 @@ export default function Transcribe() {
           </motion.div>
         </div>
       </main>
+
+      {/* Reminder Picker Popover */}
+      <Popover open={reminderOpen} onOpenChange={setReminderOpen}>
+        <PopoverTrigger asChild>
+          <span className="hidden" />
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-4" align="center" side="top">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-primary" />
+              <h4 className="font-medium text-sm">Set Reminder</h4>
+            </div>
+            
+            <Calendar
+              mode="single"
+              selected={reminderDate}
+              onSelect={setReminderDate}
+              disabled={(date) => date < new Date()}
+              initialFocus
+              className="rounded-md border"
+            />
+            
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Time:</span>
+              <Select value={reminderHour} onValueChange={setReminderHour}>
+                <SelectTrigger className="w-20" data-testid="select-reminder-hour">
+                  <SelectValue placeholder="Hour" />
+                </SelectTrigger>
+                <SelectContent>
+                  {generateTimeOptions('hour').map((h) => (
+                    <SelectItem key={h} value={h}>{h}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span>:</span>
+              <Select value={reminderMinute} onValueChange={setReminderMinute}>
+                <SelectTrigger className="w-20" data-testid="select-reminder-minute">
+                  <SelectValue placeholder="Min" />
+                </SelectTrigger>
+                <SelectContent>
+                  {generateTimeOptions('minute').map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex gap-2">
+              <Button 
+                onClick={handleSetReminder} 
+                className="flex-1"
+                data-testid="button-set-reminder"
+              >
+                Set Reminder
+              </Button>
+              {savedTranscripts.find(t => t.id === reminderItemId)?.reminderAt && (
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    if (reminderItemId) {
+                      handleRemoveReminder(reminderItemId);
+                      setReminderOpen(false);
+                    }
+                  }}
+                  data-testid="button-remove-reminder"
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
