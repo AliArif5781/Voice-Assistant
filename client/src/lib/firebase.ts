@@ -1,5 +1,5 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, type Firestore } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, getDoc, updateDoc, deleteDoc, doc, query, orderBy, where, limit, type Firestore } from 'firebase/firestore';
 import { 
   getAuth, 
   signInWithEmailAndPassword,
@@ -120,6 +120,58 @@ export async function getFromFirestore(collectionName: string, maxItems = 10) {
   
   const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+export async function getUserTranscriptions(userId: string) {
+  if (!db) {
+    initializeFirebase();
+  }
+  if (!db) {
+    throw new Error('Firebase not initialized');
+  }
+  
+  const q = query(
+    collection(db, 'transcriptions'),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc')
+  );
+  
+  const querySnapshot = await getDocs(q);
+  return querySnapshot.docs.map(docSnapshot => ({ 
+    id: docSnapshot.id, 
+    ...docSnapshot.data() 
+  }));
+}
+
+export async function updateFirestoreDoc(collectionName: string, docId: string, data: any) {
+  if (!db) {
+    initializeFirebase();
+  }
+  if (!db) {
+    throw new Error('Firebase not initialized');
+  }
+  
+  const docRef = doc(db, collectionName, docId);
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: new Date().toISOString(),
+  });
+  
+  return docId;
+}
+
+export async function deleteFirestoreDoc(collectionName: string, docId: string) {
+  if (!db) {
+    initializeFirebase();
+  }
+  if (!db) {
+    throw new Error('Firebase not initialized');
+  }
+  
+  const docRef = doc(db, collectionName, docId);
+  await deleteDoc(docRef);
+  
+  return docId;
 }
 
 export function isFirebaseInitialized() {

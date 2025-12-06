@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download, Cloud, CloudOff, Pencil, X
+  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
-import { saveToFirestore, isFirebaseConfigured } from "@/lib/firebase";
+import { saveToFirestore, isFirebaseConfigured, getUserTranscriptions, updateFirestoreDoc, deleteFirestoreDoc } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
@@ -48,17 +48,8 @@ export default function Transcribe() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptItem[]>(() => {
-    const stored = localStorage.getItem('savedTranscripts');
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptItem[]>([]);
+  const [isLoadingTranscripts, setIsLoadingTranscripts] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSavingToCloud, setIsSavingToCloud] = useState(false);
@@ -77,8 +68,36 @@ export default function Transcribe() {
   } = useAudioRecorder();
 
   useEffect(() => {
-    localStorage.setItem('savedTranscripts', JSON.stringify(savedTranscripts));
-  }, [savedTranscripts]);
+    const loadTranscriptions = async () => {
+      if (!user || !firebaseConfigured) {
+        setSavedTranscripts([]);
+        return;
+      }
+
+      setIsLoadingTranscripts(true);
+      try {
+        const transcriptions = await getUserTranscriptions(user.uid);
+        const items: TranscriptItem[] = transcriptions.map((doc: any) => ({
+          id: doc.id,
+          text: doc.text || "",
+          savedToCloud: true,
+          completed: doc.completed || false,
+        }));
+        setSavedTranscripts(items);
+      } catch (err: any) {
+        console.error('Failed to load transcriptions:', err);
+        toast({
+          title: "Failed to load",
+          description: "Could not load your saved transcriptions.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTranscripts(false);
+      }
+    };
+
+    loadTranscriptions();
+  }, [user, firebaseConfigured, toast]);
 
   useEffect(() => {
     const savePendingTranscript = async () => {
@@ -87,12 +106,13 @@ export default function Transcribe() {
       if (pendingTranscript && user && firebaseConfigured) {
         setIsSavingToCloud(true);
         try {
-          await saveToFirestore('transcriptions', {
+          const docId = await saveToFirestore('transcriptions', {
             text: pendingTranscript,
             userId: user.uid,
             userEmail: user.email,
             displayName: user.displayName || null,
             createdAt: new Date().toISOString(),
+            completed: false,
           });
           
           localStorage.removeItem('pendingTranscript');
@@ -102,7 +122,7 @@ export default function Transcribe() {
             description: "Your transcription has been saved to your account.",
           });
           setSavedTranscripts(prev => [{
-            id: crypto.randomUUID(),
+            id: docId,
             text: pendingTranscript,
             savedToCloud: true,
             completed: false
@@ -207,12 +227,13 @@ export default function Transcribe() {
     
     try {
       if (firebaseConfigured) {
-        await saveToFirestore('transcriptions', {
+        const docId = await saveToFirestore('transcriptions', {
           text: currentTranscript,
           userId: user.uid,
           userEmail: user.email,
           displayName: user.displayName || null,
           createdAt: new Date().toISOString(),
+          completed: false,
         });
         
         toast({
@@ -220,7 +241,7 @@ export default function Transcribe() {
           description: "Your transcription has been saved to your account.",
         });
         setSavedTranscripts(prev => [{
-          id: crypto.randomUUID(),
+          id: docId,
           text: currentTranscript,
           savedToCloud: true,
           completed: false
@@ -259,18 +280,47 @@ export default function Transcribe() {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const handleDelete = (id: string) => {
-    setSavedTranscripts(prev => prev.filter(item => item.id !== id));
-    toast({
-      title: "Deleted",
-      description: "Transcription has been removed.",
-    });
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteFirestoreDoc('transcriptions', id);
+      setSavedTranscripts(prev => prev.filter(item => item.id !== id));
+      toast({
+        title: "Deleted",
+        description: "Transcription has been removed.",
+      });
+    } catch (err: any) {
+      console.error('Failed to delete:', err);
+      toast({
+        title: "Delete Failed",
+        description: err.message || "Failed to delete. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleToggleCompleted = (id: string) => {
-    setSavedTranscripts(prev => prev.map(item => 
-      item.id === id ? { ...item, completed: !item.completed } : item
+  const handleToggleCompleted = async (id: string) => {
+    const item = savedTranscripts.find(t => t.id === id);
+    if (!item) return;
+
+    const newCompleted = !item.completed;
+    
+    setSavedTranscripts(prev => prev.map(t => 
+      t.id === id ? { ...t, completed: newCompleted } : t
     ));
+
+    try {
+      await updateFirestoreDoc('transcriptions', id, { completed: newCompleted });
+    } catch (err: any) {
+      console.error('Failed to update completion status:', err);
+      setSavedTranscripts(prev => prev.map(t => 
+        t.id === id ? { ...t, completed: !newCompleted } : t
+      ));
+      toast({
+        title: "Update Failed",
+        description: "Could not update completion status.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleStartEdit = (item: TranscriptItem) => {
@@ -283,7 +333,7 @@ export default function Transcribe() {
     setEditText("");
   };
 
-  const handleSaveEdit = (id: string) => {
+  const handleSaveEdit = async (id: string) => {
     if (!editText.trim()) {
       toast({
         title: "Error",
@@ -293,20 +343,60 @@ export default function Transcribe() {
       return;
     }
     
+    const trimmedText = editText.trim();
+    const originalItem = savedTranscripts.find(t => t.id === id);
+    
     setSavedTranscripts(prev => prev.map(item => 
-      item.id === id ? { ...item, text: editText.trim() } : item
+      item.id === id ? { ...item, text: trimmedText } : item
     ));
     setEditingId(null);
     setEditText("");
-    toast({
-      title: "Updated",
-      description: "Transcription has been updated.",
-    });
+
+    try {
+      await updateFirestoreDoc('transcriptions', id, { text: trimmedText });
+      toast({
+        title: "Updated",
+        description: "Transcription has been updated.",
+      });
+    } catch (err: any) {
+      console.error('Failed to update:', err);
+      if (originalItem) {
+        setSavedTranscripts(prev => prev.map(item => 
+          item.id === id ? { ...item, text: originalItem.text } : item
+        ));
+      }
+      toast({
+        title: "Update Failed",
+        description: err.message || "Failed to update. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
+    if (savedTranscripts.length === 0) return;
+
+    const previousTranscripts = [...savedTranscripts];
     setSavedTranscripts([]);
     setCurrentTranscript("");
+
+    try {
+      await Promise.all(
+        previousTranscripts.map(item => deleteFirestoreDoc('transcriptions', item.id))
+      );
+      toast({
+        title: "Cleared",
+        description: "All transcriptions have been deleted.",
+      });
+    } catch (err: any) {
+      console.error('Failed to clear all:', err);
+      setSavedTranscripts(previousTranscripts);
+      toast({
+        title: "Clear Failed",
+        description: "Could not delete all transcriptions.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleExport = () => {
@@ -564,7 +654,16 @@ export default function Transcribe() {
                     </motion.div>
                   )}
 
-                  {savedTranscripts.length === 0 && !currentTranscript ? (
+                  {isLoadingTranscripts ? (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="flex flex-col items-center justify-center h-full text-center py-12"
+                    >
+                      <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+                      <p className="text-muted-foreground">Loading your transcriptions...</p>
+                    </motion.div>
+                  ) : savedTranscripts.length === 0 && !currentTranscript ? (
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -648,17 +747,10 @@ export default function Transcribe() {
                                   {item.text}
                                 </p>
                                 <div className="flex items-center gap-2 mt-2">
-                                  {item.savedToCloud ? (
-                                    <span className="inline-flex items-center gap-1 text-xs text-green-500">
-                                      <Cloud className="w-3 h-3" />
-                                      Saved to Cloud
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                      <CloudOff className="w-3 h-3" />
-                                      Local only
-                                    </span>
-                                  )}
+                                  <span className="inline-flex items-center gap-1 text-xs text-green-500">
+                                    <Cloud className="w-3 h-3" />
+                                    Saved to Cloud
+                                  </span>
                                   {item.completed && (
                                     <span className="inline-flex items-center gap-1 text-xs text-green-500">
                                       <Check className="w-3 h-3" />
