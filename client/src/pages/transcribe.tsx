@@ -756,15 +756,17 @@ export default function Transcribe() {
                                 )}
                               </div>
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleStartEdit(item)}
-                                  className="h-8 w-8"
-                                  data-testid={`button-edit-${index}`}
-                                >
-                                  <Pencil className="w-3 h-3" />
-                                </Button>
+                                {!item.completed && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleStartEdit(item)}
+                                    className="h-8 w-8"
+                                    data-testid={`button-edit-${index}`}
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
