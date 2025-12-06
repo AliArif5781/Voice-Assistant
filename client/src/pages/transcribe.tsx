@@ -3,16 +3,25 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download, Cloud, CloudOff
+  Waves, Copy, Check, Trash2, Download, Cloud, CloudOff, Pencil, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveToFirestore, isFirebaseConfigured } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
+
+interface TranscriptItem {
+  id: string;
+  text: string;
+  savedToCloud: boolean;
+  completed: boolean;
+}
 
 function VoiceWaveform({ isActive }: { isActive: boolean }) {
   return (
@@ -39,12 +48,14 @@ export default function Transcribe() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [savedTranscripts, setSavedTranscripts] = useState<{ text: string; savedToCloud: boolean }[]>([]);
+  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptItem[]>([]);
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   const firebaseConfigured = isFirebaseConfigured();
 
   const {
@@ -76,7 +87,12 @@ export default function Transcribe() {
             title: "Saved",
             description: "Your transcription has been saved to your account.",
           });
-          setSavedTranscripts(prev => [{ text: pendingTranscript, savedToCloud: true }, ...prev]);
+          setSavedTranscripts(prev => [{
+            id: crypto.randomUUID(),
+            text: pendingTranscript,
+            savedToCloud: true,
+            completed: false
+          }, ...prev]);
         } catch (err: any) {
           console.error('Failed to save pending transcript:', err);
           toast({
@@ -189,7 +205,12 @@ export default function Transcribe() {
           title: "Saved",
           description: "Your transcription has been saved to your account.",
         });
-        setSavedTranscripts(prev => [{ text: currentTranscript, savedToCloud: true }, ...prev]);
+        setSavedTranscripts(prev => [{
+          id: crypto.randomUUID(),
+          text: currentTranscript,
+          savedToCloud: true,
+          completed: false
+        }, ...prev]);
         setCurrentTranscript("");
       } else {
         toast({
@@ -224,8 +245,49 @@ export default function Transcribe() {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const handleDelete = (index: number) => {
-    setSavedTranscripts(prev => prev.filter((_, i) => i !== index));
+  const handleDelete = (id: string) => {
+    setSavedTranscripts(prev => prev.filter(item => item.id !== id));
+    toast({
+      title: "Deleted",
+      description: "Transcription has been removed.",
+    });
+  };
+
+  const handleToggleCompleted = (id: string) => {
+    setSavedTranscripts(prev => prev.map(item => 
+      item.id === id ? { ...item, completed: !item.completed } : item
+    ));
+  };
+
+  const handleStartEdit = (item: TranscriptItem) => {
+    setEditingId(item.id);
+    setEditText(item.text);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditText("");
+  };
+
+  const handleSaveEdit = (id: string) => {
+    if (!editText.trim()) {
+      toast({
+        title: "Error",
+        description: "Text cannot be empty.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setSavedTranscripts(prev => prev.map(item => 
+      item.id === id ? { ...item, text: editText.trim() } : item
+    ));
+    setEditingId(null);
+    setEditText("");
+    toast({
+      title: "Updated",
+      description: "Transcription has been updated.",
+    });
   };
 
   const handleClearAll = () => {
@@ -234,7 +296,7 @@ export default function Transcribe() {
   };
 
   const handleExport = () => {
-    const content = savedTranscripts.map(t => t.text).join('\n\n---\n\n');
+    const content = savedTranscripts.map(t => `${t.completed ? '[COMPLETED] ' : ''}${t.text}`).join('\n\n---\n\n');
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -245,6 +307,7 @@ export default function Transcribe() {
   };
 
   const displayError = error || recordingError;
+  const completedCount = savedTranscripts.filter(t => t.completed).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -390,12 +453,12 @@ export default function Transcribe() {
             className="flex flex-col"
           >
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Waves className="w-5 h-5 text-primary" />
                 <h2 className="text-lg font-semibold text-foreground">Transcriptions</h2>
                 {savedTranscripts.length > 0 && (
                   <span className="px-2 py-0.5 text-xs rounded-full bg-primary/20 text-primary">
-                    {savedTranscripts.length}
+                    {completedCount}/{savedTranscripts.length} completed
                   </span>
                 )}
               </div>
@@ -507,55 +570,124 @@ export default function Transcribe() {
                     <div className="space-y-3">
                       {savedTranscripts.map((item, index) => (
                         <motion.div
-                          key={`${index}-${item.text.slice(0, 20)}`}
+                          key={item.id}
                           initial={{ opacity: 0, x: -10 }}
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: 10 }}
                           transition={{ delay: index * 0.05 }}
-                          className="p-4 bg-background/50 border border-border/30 rounded-lg group"
+                          className={`p-4 border rounded-lg group transition-colors ${
+                            item.completed 
+                              ? 'bg-green-500/10 border-green-500/30' 
+                              : 'bg-background/50 border-border/30'
+                          }`}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1">
-                              <p className="text-foreground text-sm leading-relaxed" data-testid={`text-transcript-${index}`}>
-                                {item.text}
-                              </p>
-                              <div className="flex items-center gap-2 mt-2">
-                                {item.savedToCloud ? (
-                                  <span className="inline-flex items-center gap-1 text-xs text-green-500">
-                                    <Cloud className="w-3 h-3" />
-                                    Saved to Cloud
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                    <CloudOff className="w-3 h-3" />
-                                    Local only
-                                  </span>
-                                )}
+                          {editingId === item.id ? (
+                            <div className="space-y-3">
+                              <Textarea
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                className="min-h-[80px] resize-none"
+                                data-testid={`input-edit-${index}`}
+                                autoFocus
+                              />
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSaveEdit(item.id)}
+                                  className="gap-1"
+                                  data-testid={`button-save-edit-${index}`}
+                                >
+                                  <Check className="w-3 h-3" />
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={handleCancelEdit}
+                                  className="gap-1"
+                                  data-testid={`button-cancel-edit-${index}`}
+                                >
+                                  <X className="w-3 h-3" />
+                                  Cancel
+                                </Button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleCopy(item.text, index)}
-                                className="h-8 w-8"
-                              >
-                                {copiedIndex === index ? (
-                                  <Check className="w-3 h-3 text-green-500" />
-                                ) : (
-                                  <Copy className="w-3 h-3" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDelete(index)}
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
+                          ) : (
+                            <div className="flex items-start gap-3">
+                              <div className="pt-0.5">
+                                <Checkbox
+                                  checked={item.completed}
+                                  onCheckedChange={() => handleToggleCompleted(item.id)}
+                                  data-testid={`checkbox-complete-${index}`}
+                                  className="data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p 
+                                  className={`text-sm leading-relaxed ${
+                                    item.completed 
+                                      ? 'text-muted-foreground line-through' 
+                                      : 'text-foreground'
+                                  }`}
+                                  data-testid={`text-transcript-${index}`}
+                                >
+                                  {item.text}
+                                </p>
+                                <div className="flex items-center gap-2 mt-2">
+                                  {item.savedToCloud ? (
+                                    <span className="inline-flex items-center gap-1 text-xs text-green-500">
+                                      <Cloud className="w-3 h-3" />
+                                      Saved to Cloud
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                      <CloudOff className="w-3 h-3" />
+                                      Local only
+                                    </span>
+                                  )}
+                                  {item.completed && (
+                                    <span className="inline-flex items-center gap-1 text-xs text-green-500">
+                                      <Check className="w-3 h-3" />
+                                      Completed
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleStartEdit(item)}
+                                  className="h-8 w-8"
+                                  data-testid={`button-edit-${index}`}
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleCopy(item.text, index)}
+                                  className="h-8 w-8"
+                                  data-testid={`button-copy-${index}`}
+                                >
+                                  {copiedIndex === index ? (
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(item.id)}
+                                  className="h-8 w-8 text-destructive hover:text-destructive"
+                                  data-testid={`button-delete-${index}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </motion.div>
                       ))}
                     </div>
