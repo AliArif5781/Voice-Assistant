@@ -48,7 +48,17 @@ export default function Transcribe() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptItem[]>([]);
+  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptItem[]>(() => {
+    const stored = localStorage.getItem('savedTranscripts');
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSavingToCloud, setIsSavingToCloud] = useState(false);
@@ -65,6 +75,10 @@ export default function Transcribe() {
     stopRecording,
     resetRecording,
   } = useAudioRecorder();
+
+  useEffect(() => {
+    localStorage.setItem('savedTranscripts', JSON.stringify(savedTranscripts));
+  }, [savedTranscripts]);
 
   useEffect(() => {
     const savePendingTranscript = async () => {
