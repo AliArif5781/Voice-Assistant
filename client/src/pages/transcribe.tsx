@@ -1,15 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X, Bell, BellRing, Clock
+  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X, Calendar as CalendarIcon, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
@@ -25,8 +24,7 @@ interface TranscriptItem {
   text: string;
   savedToCloud: boolean;
   completed: boolean;
-  reminderAt?: string | null;
-  reminderFired?: boolean;
+  scheduledAt?: string | null;
 }
 
 function VoiceWaveform({ isActive }: { isActive: boolean }) {
@@ -63,12 +61,13 @@ export default function Transcribe() {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
-  const [reminderItemId, setReminderItemId] = useState<string | null>(null);
-  const [reminderDate, setReminderDate] = useState<Date | undefined>(undefined);
-  const [reminderHour, setReminderHour] = useState("12");
-  const [reminderMinute, setReminderMinute] = useState("00");
-  const [reminderOpen, setReminderOpen] = useState(false);
-  const reminderTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  
+  // Date/time picker state for saving
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [selectedHour, setSelectedHour] = useState("12");
+  const [selectedMinute, setSelectedMinute] = useState("00");
+  
   const firebaseConfigured = isFirebaseConfigured();
 
   const {
@@ -94,8 +93,7 @@ export default function Transcribe() {
           text: doc.text || "",
           savedToCloud: true,
           completed: doc.completed || false,
-          reminderAt: doc.reminderAt || null,
-          reminderFired: doc.reminderFired || false,
+          scheduledAt: doc.scheduledAt || null,
         }));
         setSavedTranscripts(items);
       } catch (err: any) {
@@ -116,6 +114,7 @@ export default function Transcribe() {
   useEffect(() => {
     const savePendingTranscript = async () => {
       const pendingTranscript = localStorage.getItem('pendingTranscript');
+      const pendingDate = localStorage.getItem('pendingTranscriptDate');
       
       if (pendingTranscript && user && firebaseConfigured) {
         setIsSavingToCloud(true);
@@ -126,10 +125,12 @@ export default function Transcribe() {
             userEmail: user.email,
             displayName: user.displayName || null,
             createdAt: new Date().toISOString(),
+            scheduledAt: pendingDate || null,
             completed: false,
           });
           
           localStorage.removeItem('pendingTranscript');
+          localStorage.removeItem('pendingTranscriptDate');
           
           toast({
             title: "Saved",
@@ -139,7 +140,8 @@ export default function Transcribe() {
             id: docId,
             text: pendingTranscript,
             savedToCloud: true,
-            completed: false
+            completed: false,
+            scheduledAt: pendingDate || null,
           }, ...prev]);
         } catch (err: any) {
           console.error('Failed to save pending transcript:', err);
@@ -150,6 +152,7 @@ export default function Transcribe() {
           });
           setCurrentTranscript(pendingTranscript);
           localStorage.removeItem('pendingTranscript');
+          localStorage.removeItem('pendingTranscriptDate');
         } finally {
           setIsSavingToCloud(false);
         }
@@ -224,11 +227,33 @@ export default function Transcribe() {
     }
   };
 
-  const handleSave = async () => {
+  const handleOpenDatePicker = () => {
     if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
+    
+    // Initialize with current date/time
+    const now = new Date();
+    setSelectedDate(now);
+    setSelectedHour(now.getHours().toString().padStart(2, '0'));
+    setSelectedMinute(now.getMinutes().toString().padStart(2, '0'));
+    setShowDatePicker(true);
+  };
+
+  const handleSaveWithDate = async () => {
+    if (!currentTranscript || currentTranscript.includes("No speech detected")) return;
+    
+    // Build the scheduled date/time
+    let scheduledAt: string | null = null;
+    if (selectedDate) {
+      const dateTime = new Date(selectedDate);
+      dateTime.setHours(parseInt(selectedHour), parseInt(selectedMinute), 0, 0);
+      scheduledAt = dateTime.toISOString();
+    }
     
     if (!user) {
       localStorage.setItem('pendingTranscript', currentTranscript);
+      if (scheduledAt) {
+        localStorage.setItem('pendingTranscriptDate', scheduledAt);
+      }
       toast({
         title: "Sign in required",
         description: "Please sign in to save your transcription.",
@@ -238,6 +263,7 @@ export default function Transcribe() {
     }
     
     setIsSavingToCloud(true);
+    setShowDatePicker(false);
     
     try {
       if (firebaseConfigured) {
@@ -247,18 +273,22 @@ export default function Transcribe() {
           userEmail: user.email,
           displayName: user.displayName || null,
           createdAt: new Date().toISOString(),
+          scheduledAt: scheduledAt,
           completed: false,
         });
         
         toast({
           title: "Saved",
-          description: "Your transcription has been saved to your account.",
+          description: scheduledAt 
+            ? `Saved for ${format(new Date(scheduledAt), "PPP 'at' p")}`
+            : "Your transcription has been saved.",
         });
         setSavedTranscripts(prev => [{
           id: docId,
           text: currentTranscript,
           savedToCloud: true,
-          completed: false
+          completed: false,
+          scheduledAt: scheduledAt,
         }, ...prev]);
         setCurrentTranscript("");
       } else {
@@ -282,6 +312,7 @@ export default function Transcribe() {
 
   const handleDiscard = () => {
     setCurrentTranscript("");
+    setShowDatePicker(false);
     toast({
       title: "Discarded",
       description: "Transcription has been removed.",
@@ -387,146 +418,6 @@ export default function Transcribe() {
     }
   };
 
-  const fireReminder = useCallback((item: TranscriptItem) => {
-    toast({
-      title: "Reminder",
-      description: item.text.length > 100 ? item.text.substring(0, 100) + "..." : item.text,
-      duration: 10000,
-    });
-
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("Reminder", {
-        body: item.text.length > 100 ? item.text.substring(0, 100) + "..." : item.text,
-        icon: "/favicon.ico",
-      });
-    }
-
-    setSavedTranscripts(prev => prev.map(t => 
-      t.id === item.id ? { ...t, reminderFired: true } : t
-    ));
-    updateFirestoreDoc('transcriptions', item.id, { reminderFired: true }).catch(console.error);
-  }, [toast]);
-
-  const scheduleReminders = useCallback((transcripts: TranscriptItem[]) => {
-    reminderTimersRef.current.forEach((timer) => clearTimeout(timer));
-    reminderTimersRef.current.clear();
-
-    transcripts.forEach(item => {
-      if (item.reminderAt && !item.reminderFired && !item.completed) {
-        const reminderTime = new Date(item.reminderAt).getTime();
-        const now = Date.now();
-        const delay = reminderTime - now;
-
-        if (delay <= 0) {
-          fireReminder(item);
-        } else {
-          const timer = setTimeout(() => fireReminder(item), delay);
-          reminderTimersRef.current.set(item.id, timer);
-        }
-      }
-    });
-  }, [fireReminder]);
-
-  useEffect(() => {
-    if (savedTranscripts.length > 0) {
-      scheduleReminders(savedTranscripts);
-    }
-    return () => {
-      reminderTimersRef.current.forEach((timer) => clearTimeout(timer));
-    };
-  }, [savedTranscripts, scheduleReminders]);
-
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
-
-  const handleOpenReminder = (itemId: string, existingReminder?: string | null) => {
-    setReminderItemId(itemId);
-    if (existingReminder) {
-      const date = new Date(existingReminder);
-      setReminderDate(date);
-      setReminderHour(date.getHours().toString().padStart(2, '0'));
-      setReminderMinute(date.getMinutes().toString().padStart(2, '0'));
-    } else {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0);
-      setReminderDate(tomorrow);
-      setReminderHour("09");
-      setReminderMinute("00");
-    }
-    setReminderOpen(true);
-  };
-
-  const handleSetReminder = async () => {
-    if (!reminderItemId || !reminderDate) return;
-
-    const reminderDateTime = new Date(reminderDate);
-    reminderDateTime.setHours(parseInt(reminderHour), parseInt(reminderMinute), 0, 0);
-
-    if (reminderDateTime <= new Date()) {
-      toast({
-        title: "Invalid Time",
-        description: "Please select a future date and time.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const reminderAt = reminderDateTime.toISOString();
-
-    setSavedTranscripts(prev => prev.map(t => 
-      t.id === reminderItemId ? { ...t, reminderAt, reminderFired: false } : t
-    ));
-
-    try {
-      await updateFirestoreDoc('transcriptions', reminderItemId, { 
-        reminderAt, 
-        reminderFired: false 
-      });
-      toast({
-        title: "Reminder Set",
-        description: `You'll be reminded on ${format(reminderDateTime, "PPP 'at' p")}`,
-      });
-    } catch (err: any) {
-      console.error('Failed to set reminder:', err);
-      toast({
-        title: "Failed",
-        description: "Could not set reminder. Please try again.",
-        variant: "destructive",
-      });
-    }
-
-    setReminderOpen(false);
-    setReminderItemId(null);
-  };
-
-  const handleRemoveReminder = async (itemId: string) => {
-    setSavedTranscripts(prev => prev.map(t => 
-      t.id === itemId ? { ...t, reminderAt: null, reminderFired: false } : t
-    ));
-
-    try {
-      await updateFirestoreDoc('transcriptions', itemId, { 
-        reminderAt: null, 
-        reminderFired: false 
-      });
-      toast({
-        title: "Reminder Removed",
-        description: "The reminder has been removed.",
-      });
-    } catch (err: any) {
-      console.error('Failed to remove reminder:', err);
-      toast({
-        title: "Failed",
-        description: "Could not remove reminder.",
-        variant: "destructive",
-      });
-    }
-  };
-
   const generateTimeOptions = (type: 'hour' | 'minute') => {
     if (type === 'hour') {
       return Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
@@ -561,7 +452,14 @@ export default function Transcribe() {
   };
 
   const handleExport = () => {
-    const content = savedTranscripts.map(t => `${t.completed ? '[COMPLETED] ' : ''}${t.text}`).join('\n\n---\n\n');
+    const content = savedTranscripts.map(t => {
+      let line = t.completed ? '[COMPLETED] ' : '';
+      if (t.scheduledAt) {
+        line += `[${format(new Date(t.scheduledAt), "PPP p")}] `;
+      }
+      line += t.text;
+      return line;
+    }).join('\n\n---\n\n');
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -666,44 +564,160 @@ export default function Transcribe() {
                   <button
                     onClick={handleToggleRecording}
                     disabled={isProcessing}
-                    data-testid="button-mic-toggle"
-                    className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 disabled:opacity-50 ${
-                      isRecording 
-                        ? 'bg-gradient-to-br from-red-500 to-red-600 glow-recording' 
+                    className={`relative w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
+                      isRecording
+                        ? 'bg-red-500 shadow-lg shadow-red-500/50'
                         : isProcessing
-                          ? 'bg-gradient-to-br from-yellow-500 to-amber-600'
-                          : 'bg-gradient-to-br from-primary to-cyan-500 glow-effect'
+                          ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50'
+                          : 'bg-primary shadow-lg shadow-primary/50'
                     }`}
+                    data-testid="button-toggle-recording"
                   >
-                    {isRecording ? (
-                      <MicOff className="w-10 h-10 text-white" />
-                    ) : isProcessing ? (
-                      <Loader2 className="w-10 h-10 text-white animate-spin" />
+                    {isProcessing ? (
+                      <Loader2 className="w-8 h-8 text-white animate-spin" />
+                    ) : isRecording ? (
+                      <MicOff className="w-8 h-8 text-white" />
                     ) : (
-                      <Mic className="w-10 h-10 text-white" />
+                      <Mic className="w-8 h-8 text-white" />
                     )}
                   </button>
                 </motion.div>
 
-                <p className="mt-4 text-base text-muted-foreground text-center">
-                  {isRecording 
-                    ? "Recording... Tap to stop" 
-                    : isProcessing 
-                      ? "Processing your speech..." 
-                      : "Tap to start recording"}
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {isProcessing 
+                    ? "Processing your speech..." 
+                    : isRecording 
+                      ? "Listening... Click to stop" 
+                      : "Click to start recording"}
                 </p>
 
+                {displayError && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20"
+                  >
+                    <p className="text-sm text-destructive">{displayError}</p>
+                  </motion.div>
+                )}
+
                 <AnimatePresence>
-                  {displayError && (
+                  {currentTranscript && (
                     <motion.div
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg w-full max-w-sm"
+                      exit={{ opacity: 0, y: -20 }}
+                      className="mt-6 w-full"
                     >
-                      <p className="text-sm text-destructive text-center" data-testid="text-error">
-                        {displayError}
-                      </p>
+                      <div className="p-4 rounded-lg bg-muted/50 border border-border">
+                        <div className="flex items-start gap-2 mb-2">
+                          <Volume2 className="w-4 h-4 text-primary mt-0.5" />
+                          <span className="text-xs text-muted-foreground">Transcription</span>
+                        </div>
+                        <p className="text-foreground" data-testid="text-current-transcript">{currentTranscript}</p>
+                      </div>
+
+                      {!currentTranscript.includes("No speech detected") && !currentTranscript.includes("No audio recorded") && (
+                        <div className="mt-4 space-y-3">
+                          {/* Date/Time Picker */}
+                          {showDatePicker && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="p-4 rounded-lg bg-muted/50 border border-border space-y-4"
+                            >
+                              <div className="flex items-center gap-2">
+                                <CalendarIcon className="w-4 h-4 text-primary" />
+                                <h4 className="font-medium text-sm">Set Date & Time</h4>
+                              </div>
+                              
+                              <Calendar
+                                mode="single"
+                                selected={selectedDate}
+                                onSelect={setSelectedDate}
+                                initialFocus
+                                className="rounded-md border mx-auto"
+                              />
+                              
+                              <div className="flex items-center justify-center gap-2">
+                                <Clock className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-sm text-muted-foreground">Time:</span>
+                                <Select value={selectedHour} onValueChange={setSelectedHour}>
+                                  <SelectTrigger className="w-20" data-testid="select-hour">
+                                    <SelectValue placeholder="Hour" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {generateTimeOptions('hour').map((h) => (
+                                      <SelectItem key={h} value={h}>{h}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <span>:</span>
+                                <Select value={selectedMinute} onValueChange={setSelectedMinute}>
+                                  <SelectTrigger className="w-20" data-testid="select-minute">
+                                    <SelectValue placeholder="Min" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {generateTimeOptions('minute').map((m) => (
+                                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              
+                              <div className="flex gap-2">
+                                <Button 
+                                  onClick={handleSaveWithDate}
+                                  disabled={isSavingToCloud || !selectedDate}
+                                  className="flex-1"
+                                  data-testid="button-confirm-save"
+                                >
+                                  {isSavingToCloud ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                      Saving...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Cloud className="w-4 h-4 mr-2" />
+                                      Save
+                                    </>
+                                  )}
+                                </Button>
+                                <Button 
+                                  variant="outline"
+                                  onClick={() => setShowDatePicker(false)}
+                                  data-testid="button-cancel-date"
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </motion.div>
+                          )}
+
+                          {!showDatePicker && (
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={handleOpenDatePicker}
+                                disabled={isSavingToCloud}
+                                className="flex-1"
+                                data-testid="button-save-transcript"
+                              >
+                                <Cloud className="w-4 h-4 mr-2" />
+                                Save
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={handleDiscard}
+                                data-testid="button-discard-transcript"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -715,144 +729,75 @@ export default function Transcribe() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="flex flex-col"
           >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Waves className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-semibold text-foreground">Transcriptions</h2>
-                {savedTranscripts.length > 0 && (
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-primary/20 text-primary">
-                    {completedCount}/{savedTranscripts.length} completed
-                  </span>
-                )}
-              </div>
-              {savedTranscripts.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={handleExport}
-                    className="gap-1"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span className="hidden sm:inline">Export</span>
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={handleClearAll}
-                    className="gap-1 text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span className="hidden sm:inline">Clear</span>
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <Card className="glass-panel flex-1 overflow-hidden">
-              <CardContent className="p-4 sm:p-6 h-full min-h-[350px] max-h-[500px] overflow-y-auto">
-                <AnimatePresence mode="popLayout">
-                  {currentTranscript && (
-                    <motion.div
-                      key="current"
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="mb-4 p-4 bg-primary/10 border border-primary/20 rounded-lg"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 flex-1">
-                          <div className="p-2 rounded-lg bg-primary/20">
-                            <Volume2 className="w-4 h-4 text-primary" />
-                          </div>
-                          <p className="text-foreground leading-relaxed flex-1" data-testid="text-current-speech">
-                            {currentTranscript}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleCopy(currentTranscript, -1)}
-                          className="shrink-0"
-                        >
-                          {copiedIndex === -1 ? (
-                            <Check className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <Copy className="w-4 h-4" />
-                          )}
-                        </Button>
-                      </div>
-                      
-                      {!currentTranscript.includes("No speech detected") && (
-                        <div className="flex items-center gap-2 mt-4 ml-11">
-                          <Button
-                            onClick={handleSave}
-                            disabled={isSavingToCloud}
-                            className="gap-2"
-                            data-testid="button-save"
-                          >
-                            {isSavingToCloud ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                            {isSavingToCloud ? "Saving..." : "Save"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={handleDiscard}
-                            className="gap-2 text-destructive"
-                            data-testid="button-delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Delete
-                          </Button>
-                        </div>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-2 ml-11">Review your transcription above</p>
-                    </motion.div>
+            <Card className="glass-card overflow-visible h-full">
+              <CardContent className="p-6 sm:p-8">
+                <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Waves className="w-5 h-5 text-primary" />
+                    <h2 className="text-lg font-semibold text-foreground">Saved Transcriptions</h2>
+                    {savedTranscripts.length > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        ({completedCount}/{savedTranscripts.length} done)
+                      </span>
+                    )}
+                  </div>
+                  {savedTranscripts.length > 0 && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleExport}
+                        className="gap-1"
+                        data-testid="button-export"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden sm:inline">Export</span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleClearAll}
+                        className="gap-1 text-destructive"
+                        data-testid="button-clear-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span className="hidden sm:inline">Clear All</span>
+                      </Button>
+                    </div>
                   )}
+                </div>
 
+                <AnimatePresence mode="popLayout">
                   {isLoadingTranscripts ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                    </div>
+                  ) : savedTranscripts.length === 0 ? (
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="flex flex-col items-center justify-center h-full text-center py-12"
+                      className="text-center py-12"
                     >
-                      <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
-                      <p className="text-muted-foreground">Loading your transcriptions...</p>
-                    </motion.div>
-                  ) : savedTranscripts.length === 0 && !currentTranscript ? (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="flex flex-col items-center justify-center h-full text-center py-12"
-                    >
-                      <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-                        <Mic className="w-8 h-8 text-muted-foreground" />
-                      </div>
-                      <p className="text-muted-foreground">
-                        No transcriptions yet
-                      </p>
-                      <p className="text-sm text-muted-foreground/70 mt-1">
-                        Click the microphone to start recording
+                      <Waves className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+                      <p className="text-muted-foreground">No transcriptions yet</p>
+                      <p className="text-xs text-muted-foreground/60 mt-1">
+                        Start recording to see your transcriptions here
                       </p>
                     </motion.div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                       {savedTranscripts.map((item, index) => (
                         <motion.div
                           key={item.id}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 10 }}
-                          transition={{ delay: index * 0.05 }}
-                          className={`p-4 border rounded-lg group transition-colors ${
+                          layout
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          className={`group p-4 rounded-lg border transition-all ${
                             item.completed 
-                              ? 'bg-green-500/10 border-green-500/30' 
-                              : 'bg-background/50 border-border/30'
+                              ? 'bg-muted/30 border-border/50' 
+                              : 'bg-muted/50 border-border'
                           }`}
                         >
                           {editingId === item.id ? (
@@ -860,119 +805,87 @@ export default function Transcribe() {
                               <Textarea
                                 value={editText}
                                 onChange={(e) => setEditText(e.target.value)}
-                                className="min-h-[80px] resize-none"
-                                data-testid={`input-edit-${index}`}
+                                className="min-h-[100px] text-sm"
                                 autoFocus
+                                data-testid={`textarea-edit-${item.id}`}
                               />
-                              <div className="flex items-center gap-2">
+                              <div className="flex gap-2 justify-end">
                                 <Button
                                   size="sm"
-                                  onClick={() => handleSaveEdit(item.id)}
-                                  className="gap-1"
-                                  data-testid={`button-save-edit-${index}`}
+                                  variant="ghost"
+                                  onClick={handleCancelEdit}
+                                  data-testid={`button-cancel-edit-${item.id}`}
                                 >
-                                  <Check className="w-3 h-3" />
-                                  Save
+                                  <X className="w-4 h-4" />
                                 </Button>
                                 <Button
                                   size="sm"
-                                  variant="outline"
-                                  onClick={handleCancelEdit}
-                                  className="gap-1"
-                                  data-testid={`button-cancel-edit-${index}`}
+                                  onClick={() => handleSaveEdit(item.id)}
+                                  data-testid={`button-save-edit-${item.id}`}
                                 >
-                                  <X className="w-3 h-3" />
-                                  Cancel
+                                  <Check className="w-4 h-4" />
                                 </Button>
                               </div>
                             </div>
                           ) : (
-                            <div className="flex items-start gap-3">
-                              <div className="pt-0.5">
+                            <>
+                              <div className="flex items-start gap-3">
                                 <Checkbox
                                   checked={item.completed}
                                   onCheckedChange={() => handleToggleCompleted(item.id)}
-                                  data-testid={`checkbox-complete-${index}`}
-                                  className="data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
+                                  className="mt-1"
+                                  data-testid={`checkbox-complete-${item.id}`}
                                 />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p 
-                                  className={`text-sm leading-relaxed ${
-                                    item.completed 
-                                      ? 'text-muted-foreground line-through' 
-                                      : 'text-foreground'
-                                  }`}
-                                  data-testid={`text-transcript-${index}`}
-                                >
-                                  {item.text}
-                                </p>
-                                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                                  {item.completed && (
-                                    <span className="inline-flex items-center gap-1 text-xs text-green-500">
-                                      <Check className="w-3 h-3" />
-                                      Completed
-                                    </span>
-                                  )}
-                                  {item.reminderAt && !item.reminderFired && (
-                                    <span className="inline-flex items-center gap-1 text-xs text-primary">
-                                      <Bell className="w-3 h-3" />
-                                      {format(new Date(item.reminderAt), "MMM d, h:mm a")}
-                                    </span>
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm text-foreground break-words ${
+                                    item.completed ? 'line-through opacity-60' : ''
+                                  }`} data-testid={`text-transcript-${item.id}`}>
+                                    {item.text}
+                                  </p>
+                                  {item.scheduledAt && (
+                                    <div className="flex items-center gap-1 mt-2">
+                                      <CalendarIcon className="w-3 h-3 text-primary" />
+                                      <span className="text-xs text-primary">
+                                        {format(new Date(item.scheduledAt), "PPP 'at' p")}
+                                      </span>
+                                    </div>
                                   )}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex items-center justify-end gap-1 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
                                 {!item.completed && (
                                   <Button
-                                    variant="ghost"
                                     size="icon"
+                                    variant="ghost"
                                     onClick={() => handleStartEdit(item)}
-                                    className="h-8 w-8"
-                                    data-testid={`button-edit-${index}`}
+                                    data-testid={`button-edit-${item.id}`}
                                   >
-                                    <Pencil className="w-3 h-3" />
-                                  </Button>
-                                )}
-                                {!item.completed && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleOpenReminder(item.id, item.reminderAt)}
-                                    className={`h-8 w-8 ${item.reminderAt && !item.reminderFired ? 'text-primary' : ''}`}
-                                    data-testid={`button-reminder-${index}`}
-                                  >
-                                    {item.reminderAt && !item.reminderFired ? (
-                                      <BellRing className="w-3 h-3" />
-                                    ) : (
-                                      <Bell className="w-3 h-3" />
-                                    )}
+                                    <Pencil className="w-4 h-4" />
                                   </Button>
                                 )}
                                 <Button
-                                  variant="ghost"
                                   size="icon"
+                                  variant="ghost"
                                   onClick={() => handleCopy(item.text, index)}
-                                  className="h-8 w-8"
-                                  data-testid={`button-copy-${index}`}
+                                  data-testid={`button-copy-${item.id}`}
                                 >
                                   {copiedIndex === index ? (
-                                    <Check className="w-3 h-3 text-green-500" />
+                                    <Check className="w-4 h-4 text-green-500" />
                                   ) : (
-                                    <Copy className="w-3 h-3" />
+                                    <Copy className="w-4 h-4" />
                                   )}
                                 </Button>
                                 <Button
-                                  variant="ghost"
                                   size="icon"
+                                  variant="ghost"
                                   onClick={() => handleDelete(item.id)}
-                                  className="h-8 w-8 text-destructive hover:text-destructive"
-                                  data-testid={`button-delete-${index}`}
+                                  className="text-destructive"
+                                  data-testid={`button-delete-${item.id}`}
                                 >
-                                  <Trash2 className="w-3 h-3" />
+                                  <Trash2 className="w-4 h-4" />
                                 </Button>
                               </div>
-                            </div>
+                            </>
                           )}
                         </motion.div>
                       ))}
@@ -984,79 +897,6 @@ export default function Transcribe() {
           </motion.div>
         </div>
       </main>
-
-      {/* Reminder Picker Popover */}
-      <Popover open={reminderOpen} onOpenChange={setReminderOpen}>
-        <PopoverTrigger asChild>
-          <span className="hidden" />
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-4" align="center" side="top">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-primary" />
-              <h4 className="font-medium text-sm">Set Reminder</h4>
-            </div>
-            
-            <Calendar
-              mode="single"
-              selected={reminderDate}
-              onSelect={setReminderDate}
-              disabled={(date) => date < new Date()}
-              initialFocus
-              className="rounded-md border"
-            />
-            
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Time:</span>
-              <Select value={reminderHour} onValueChange={setReminderHour}>
-                <SelectTrigger className="w-20" data-testid="select-reminder-hour">
-                  <SelectValue placeholder="Hour" />
-                </SelectTrigger>
-                <SelectContent>
-                  {generateTimeOptions('hour').map((h) => (
-                    <SelectItem key={h} value={h}>{h}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <span>:</span>
-              <Select value={reminderMinute} onValueChange={setReminderMinute}>
-                <SelectTrigger className="w-20" data-testid="select-reminder-minute">
-                  <SelectValue placeholder="Min" />
-                </SelectTrigger>
-                <SelectContent>
-                  {generateTimeOptions('minute').map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="flex gap-2">
-              <Button 
-                onClick={handleSetReminder} 
-                className="flex-1"
-                data-testid="button-set-reminder"
-              >
-                Set Reminder
-              </Button>
-              {savedTranscripts.find(t => t.id === reminderItemId)?.reminderAt && (
-                <Button 
-                  variant="outline"
-                  onClick={() => {
-                    if (reminderItemId) {
-                      handleRemoveReminder(reminderItemId);
-                      setReminderOpen(false);
-                    }
-                  }}
-                  data-testid="button-remove-reminder"
-                >
-                  Remove
-                </Button>
-              )}
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
     </div>
   );
 }
