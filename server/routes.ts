@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertVoiceInteractionSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
 import { processVoiceInput, isGeminiConfigured, transcribeAudio } from "./gemini";
+import { extractTasksFromText } from "./time-parser";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -107,6 +108,23 @@ export async function registerRoutes(
         ? "Gemini AI is configured and ready" 
         : "Gemini API key not yet configured"
     });
+  });
+
+  // Extract tasks with times from transcription text
+  app.post("/api/extract-tasks", async (req, res) => {
+    try {
+      const { text } = req.body;
+      
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "text is required" });
+      }
+
+      const tasks = extractTasksFromText(text);
+      res.json({ tasks });
+    } catch (error: any) {
+      console.error("Task extraction error:", error);
+      res.status(500).json({ error: "Failed to extract tasks", message: error.message });
+    }
   });
 
   // Firebase config endpoint - exposes config for frontend initialization

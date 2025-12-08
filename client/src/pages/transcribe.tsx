@@ -15,6 +15,7 @@ import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveToFirestore, isFirebaseConfigured, getUserTranscriptions, updateFirestoreDoc, deleteFirestoreDoc } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
+import { useReminders } from "@/hooks/use-reminders";
 import { format } from "date-fns";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
@@ -25,6 +26,12 @@ interface TranscriptItem {
   savedToCloud: boolean;
   completed: boolean;
   scheduledAt?: string | null;
+}
+
+interface ExtractedTask {
+  text: string;
+  reminderTime: string | null;
+  originalTimeText: string | null;
 }
 
 function VoiceWaveform({ isActive }: { isActive: boolean }) {
@@ -61,6 +68,8 @@ export default function Transcribe() {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [extractedTasks, setExtractedTasks] = useState<ExtractedTask[]>([]);
+  const [isExtracting, setIsExtracting] = useState(false);
   
   // Date/time picker state for saving
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -77,6 +86,8 @@ export default function Transcribe() {
     stopRecording,
     resetRecording,
   } = useAudioRecorder();
+
+  useReminders(savedTranscripts);
 
   useEffect(() => {
     const loadTranscriptions = async () => {
@@ -162,11 +173,32 @@ export default function Transcribe() {
     savePendingTranscript();
   }, [user, firebaseConfigured, toast]);
 
+  const extractTasksFromTranscript = async (transcript: string) => {
+    setIsExtracting(true);
+    try {
+      const response = await fetch('/api/extract-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: transcript }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setExtractedTasks(data.tasks || []);
+      }
+    } catch (err) {
+      console.error('Task extraction error:', err);
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   const handleToggleRecording = async () => {
     if (isRecording) {
       setIsProcessing(true);
       setError(null);
       setCurrentTranscript("");
+      setExtractedTasks([]);
       
       try {
         const audioBlob = await stopRecording();
@@ -198,6 +230,7 @@ export default function Transcribe() {
               
               if (transcript && transcript !== "No speech detected.") {
                 setCurrentTranscript(transcript);
+                await extractTasksFromTranscript(transcript);
               } else {
                 setCurrentTranscript("No speech detected. Try speaking louder or closer to the microphone.");
               }
@@ -223,6 +256,7 @@ export default function Transcribe() {
     } else {
       setError(null);
       setCurrentTranscript("");
+      setExtractedTasks([]);
       await startRecording();
     }
   };
@@ -312,11 +346,78 @@ export default function Transcribe() {
 
   const handleDiscard = () => {
     setCurrentTranscript("");
+    setExtractedTasks([]);
     setShowDatePicker(false);
     toast({
       title: "Discarded",
       description: "Transcription has been removed.",
     });
+  };
+
+  const handleSaveExtractedTasks = async () => {
+    if (!user) {
+      localStorage.setItem('pendingTranscript', currentTranscript);
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save your tasks.",
+      });
+      setLocation("/signin");
+      return;
+    }
+
+    if (!firebaseConfigured) {
+      toast({
+        title: "Error",
+        description: "Firebase is not configured.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingToCloud(true);
+    
+    try {
+      const savedItems: TranscriptItem[] = [];
+      
+      for (const task of extractedTasks) {
+        const docId = await saveToFirestore('transcriptions', {
+          text: task.text,
+          userId: user.uid,
+          userEmail: user.email,
+          displayName: user.displayName || null,
+          createdAt: new Date().toISOString(),
+          scheduledAt: task.reminderTime,
+          originalTimeText: task.originalTimeText,
+          completed: false,
+        });
+        
+        savedItems.push({
+          id: docId,
+          text: task.text,
+          savedToCloud: true,
+          completed: false,
+          scheduledAt: task.reminderTime,
+        });
+      }
+      
+      toast({
+        title: "Saved",
+        description: `${savedItems.length} task${savedItems.length > 1 ? 's' : ''} saved successfully.`,
+      });
+      
+      setSavedTranscripts(prev => [...savedItems, ...prev]);
+      setCurrentTranscript("");
+      setExtractedTasks([]);
+    } catch (err: any) {
+      console.error('Failed to save tasks:', err);
+      toast({
+        title: "Save Failed",
+        description: err.message || "Failed to save tasks.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingToCloud(false);
+    }
   };
 
   const handleCopy = async (text: string, index: number) => {
@@ -619,93 +720,60 @@ export default function Transcribe() {
 
                       {!currentTranscript.includes("No speech detected") && !currentTranscript.includes("No audio recorded") && (
                         <div className="mt-4 space-y-3">
-                          {/* Date/Time Picker */}
-                          {showDatePicker && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="p-4 rounded-lg bg-muted/50 border border-border space-y-4"
-                            >
+                          {isExtracting && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Extracting tasks...</span>
+                            </div>
+                          )}
+                          
+                          {extractedTasks.length > 0 && (
+                            <div className="space-y-2">
                               <div className="flex items-center gap-2">
-                                <CalendarIcon className="w-4 h-4 text-primary" />
-                                <h4 className="font-medium text-sm">Set Date & Time</h4>
+                                <Clock className="w-4 h-4 text-primary" />
+                                <span className="text-xs text-muted-foreground font-medium">
+                                  Extracted Tasks ({extractedTasks.length})
+                                </span>
                               </div>
-                              
-                              <Calendar
-                                mode="single"
-                                selected={selectedDate}
-                                onSelect={setSelectedDate}
-                                initialFocus
-                                className="rounded-md border mx-auto"
-                              />
-                              
-                              <div className="flex items-center justify-center gap-2">
-                                <Clock className="w-4 h-4 text-muted-foreground" />
-                                <span className="text-sm text-muted-foreground">Time:</span>
-                                <Select value={selectedHour} onValueChange={setSelectedHour}>
-                                  <SelectTrigger className="w-20" data-testid="select-hour">
-                                    <SelectValue placeholder="Hour" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {generateTimeOptions('hour').map((h) => (
-                                      <SelectItem key={h} value={h}>{h}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <span>:</span>
-                                <Select value={selectedMinute} onValueChange={setSelectedMinute}>
-                                  <SelectTrigger className="w-20" data-testid="select-minute">
-                                    <SelectValue placeholder="Min" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {generateTimeOptions('minute').map((m) => (
-                                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              
-                              <div className="flex gap-2">
-                                <Button 
-                                  onClick={handleSaveWithDate}
-                                  disabled={isSavingToCloud || !selectedDate}
-                                  className="flex-1"
-                                  data-testid="button-confirm-save"
+                              {extractedTasks.map((task, idx) => (
+                                <div 
+                                  key={idx}
+                                  className="p-3 rounded-lg bg-accent/20 border border-accent/30"
+                                  data-testid={`extracted-task-${idx}`}
                                 >
-                                  {isSavingToCloud ? (
-                                    <>
-                                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                      Saving...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Cloud className="w-4 h-4 mr-2" />
-                                      Save
-                                    </>
+                                  <p className="text-sm text-foreground">{task.text}</p>
+                                  {task.reminderTime && (
+                                    <div className="flex items-center gap-1 mt-2">
+                                      <CalendarIcon className="w-3 h-3 text-primary" />
+                                      <span className="text-xs text-primary">
+                                        {format(new Date(task.reminderTime), "PPP 'at' p")}
+                                      </span>
+                                    </div>
                                   )}
-                                </Button>
-                                <Button 
-                                  variant="outline"
-                                  onClick={() => setShowDatePicker(false)}
-                                  data-testid="button-cancel-date"
-                                >
-                                  Cancel
-                                </Button>
-                              </div>
-                            </motion.div>
+                                </div>
+                              ))}
+                            </div>
                           )}
 
-                          {!showDatePicker && (
+                          {extractedTasks.length > 0 ? (
                             <div className="flex gap-2">
                               <Button
-                                onClick={handleOpenDatePicker}
+                                onClick={handleSaveExtractedTasks}
                                 disabled={isSavingToCloud}
                                 className="flex-1"
-                                data-testid="button-save-transcript"
+                                data-testid="button-save-tasks"
                               >
-                                <Cloud className="w-4 h-4 mr-2" />
-                                Save
+                                {isSavingToCloud ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Cloud className="w-4 h-4 mr-2" />
+                                    Save {extractedTasks.length} Task{extractedTasks.length > 1 ? 's' : ''}
+                                  </>
+                                )}
                               </Button>
                               <Button
                                 variant="outline"
@@ -715,6 +783,105 @@ export default function Transcribe() {
                                 <Trash2 className="w-4 h-4" />
                               </Button>
                             </div>
+                          ) : !isExtracting && (
+                            <>
+                              {showDatePicker && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="p-4 rounded-lg bg-muted/50 border border-border space-y-4"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <CalendarIcon className="w-4 h-4 text-primary" />
+                                    <h4 className="font-medium text-sm">Set Date & Time</h4>
+                                  </div>
+                                  
+                                  <Calendar
+                                    mode="single"
+                                    selected={selectedDate}
+                                    onSelect={setSelectedDate}
+                                    initialFocus
+                                    className="rounded-md border mx-auto"
+                                  />
+                                  
+                                  <div className="flex items-center justify-center gap-2">
+                                    <Clock className="w-4 h-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground">Time:</span>
+                                    <Select value={selectedHour} onValueChange={setSelectedHour}>
+                                      <SelectTrigger className="w-20" data-testid="select-hour">
+                                        <SelectValue placeholder="Hour" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {generateTimeOptions('hour').map((h) => (
+                                          <SelectItem key={h} value={h}>{h}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <span>:</span>
+                                    <Select value={selectedMinute} onValueChange={setSelectedMinute}>
+                                      <SelectTrigger className="w-20" data-testid="select-minute">
+                                        <SelectValue placeholder="Min" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {generateTimeOptions('minute').map((m) => (
+                                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  
+                                  <div className="flex gap-2">
+                                    <Button 
+                                      onClick={handleSaveWithDate}
+                                      disabled={isSavingToCloud || !selectedDate}
+                                      className="flex-1"
+                                      data-testid="button-confirm-save"
+                                    >
+                                      {isSavingToCloud ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                          Saving...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Cloud className="w-4 h-4 mr-2" />
+                                          Save
+                                        </>
+                                      )}
+                                    </Button>
+                                    <Button 
+                                      variant="outline"
+                                      onClick={() => setShowDatePicker(false)}
+                                      data-testid="button-cancel-date"
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </motion.div>
+                              )}
+
+                              {!showDatePicker && (
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={handleOpenDatePicker}
+                                    disabled={isSavingToCloud}
+                                    className="flex-1"
+                                    data-testid="button-save-transcript"
+                                  >
+                                    <Cloud className="w-4 h-4 mr-2" />
+                                    Save
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    onClick={handleDiscard}
+                                    data-testid="button-discard-transcript"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
