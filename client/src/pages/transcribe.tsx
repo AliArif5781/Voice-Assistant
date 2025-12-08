@@ -565,6 +565,13 @@ export default function Transcribe() {
 
   const displayError = error || recordingError;
   const completedCount = savedTranscripts.filter(t => t.completed).length;
+  
+  const sortedTranscripts = [...savedTranscripts].sort((a, b) => {
+    if (!a.scheduledAt && !b.scheduledAt) return 0;
+    if (!a.scheduledAt) return 1;
+    if (!b.scheduledAt) return -1;
+    return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+  });
 
   return (
     <div className="min-h-screen bg-background">
@@ -947,7 +954,7 @@ export default function Transcribe() {
                     </motion.div>
                   ) : (
                     <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                      {savedTranscripts.map((item, index) => (
+                      {sortedTranscripts.map((item, index) => (
                         <motion.div
                           key={item.id}
                           layout
