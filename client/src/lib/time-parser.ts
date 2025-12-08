@@ -25,7 +25,6 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
   
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
-    const timeStartIndex = result.index;
     const timeEndIndex = result.index + result.text.length;
     
     let segmentStart: number;
@@ -68,6 +67,7 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
     const { timeResult, startIndex, endIndex } = segment;
     const timeText = timeResult.text;
     const parsedDate = timeResult.start.date();
+    
     const year = parsedDate.getFullYear();
     const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
     const day = String(parsedDate.getDate()).padStart(2, '0');
@@ -82,12 +82,14 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
       .replace(new RegExp(escapeRegex(timeText), 'gi'), ' ')
       .replace(/^[\s,.\-:;]+/, '')
       .replace(/[\s,.\-:;]+$/, '')
-      .replace(/^(and|then|also|plus|next|after that|at|on|by)\s+/gi, '')
+      .replace(/^(and|then|also|plus|next|after that|at|on|by|today|tomorrow)\s+/gi, '')
       .replace(/\s+(and|then|also|plus)$/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
     
-    taskText = taskText.charAt(0).toUpperCase() + taskText.slice(1);
+    if (taskText.length > 0) {
+      taskText = taskText.charAt(0).toUpperCase() + taskText.slice(1);
+    }
     
     if (taskText.length < 2) {
       taskText = `Task scheduled`;
@@ -118,12 +120,4 @@ function deduplicateTasks(tasks: ExtractedTask[]): ExtractedTask[] {
   }
   
   return Array.from(seen.values());
-}
-
-export function parseRelativeTime(text: string): Date | null {
-  const results = chrono.parse(text, new Date(), { forwardDate: true });
-  if (results.length > 0) {
-    return results[0].start.date();
-  }
-  return null;
 }

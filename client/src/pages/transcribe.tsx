@@ -17,6 +17,7 @@ import { saveToFirestore, isFirebaseConfigured, getUserTranscriptions, updateFir
 import { useToast } from "@/hooks/use-toast";
 import { useReminders } from "@/hooks/use-reminders";
 import { format } from "date-fns";
+import { extractTasksFromText, ExtractedTask as ParsedTask } from "@/lib/time-parser";
 
 import orbImage from "@assets/generated_images/ai_voice_assistant_glowing_orb.png";
 
@@ -173,19 +174,11 @@ export default function Transcribe() {
     savePendingTranscript();
   }, [user, firebaseConfigured, toast]);
 
-  const extractTasksFromTranscript = async (transcript: string) => {
+  const extractTasksFromTranscript = (transcript: string) => {
     setIsExtracting(true);
     try {
-      const response = await fetch('/api/extract-tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: transcript }),
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setExtractedTasks(data.tasks || []);
-      }
+      const tasks = extractTasksFromText(transcript);
+      setExtractedTasks(tasks);
     } catch (err) {
       console.error('Task extraction error:', err);
     } finally {
