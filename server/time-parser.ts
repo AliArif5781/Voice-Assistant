@@ -7,51 +7,83 @@ export interface ExtractedTask {
 }
 
 export function extractTasksFromText(text: string): ExtractedTask[] {
-  const results = chrono.parse(text, new Date(), { forwardDate: true });
+  let cleanedInput = text.trim();
+  
+  cleanedInput = cleanedInput.replace(/^(fast|okay|ok|hey|hi|hello|um|uh|so|well|alright|right)\s+/i, '');
+  
+  const results = chrono.parse(cleanedInput, new Date(), { forwardDate: true });
   
   if (results.length === 0) {
     return [{
-      text: text.trim(),
+      text: cleanedInput,
       reminderTime: null,
       originalTimeText: null,
     }];
   }
 
-  const tasks: ExtractedTask[] = [];
-  let lastEndIndex = 0;
-
-  for (const result of results) {
-    const timeText = result.text;
-    const reminderTime = result.start.date().toISOString();
+  const taskSegments: { timeResult: typeof results[0]; startIndex: number; endIndex: number }[] = [];
+  
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const timeStartIndex = result.index;
+    const timeEndIndex = result.index + result.text.length;
     
-    const contextStart = Math.max(0, result.index - 50);
-    const contextEnd = Math.min(text.length, result.index + result.text.length + 50);
-    
-    let taskText = '';
-    
-    const beforeTime = text.substring(lastEndIndex, result.index).trim();
-    const afterTimeEnd = result.index + result.text.length;
-    
-    let nextResultStart = text.length;
-    const currentIdx = results.indexOf(result);
-    if (currentIdx < results.length - 1) {
-      nextResultStart = results[currentIdx + 1].index;
+    let segmentStart: number;
+    if (i === 0) {
+      segmentStart = 0;
+    } else {
+      segmentStart = taskSegments[i - 1].endIndex;
     }
     
-    const afterTime = text.substring(afterTimeEnd, nextResultStart).trim();
+    let segmentEnd: number;
+    if (i === results.length - 1) {
+      segmentEnd = cleanedInput.length;
+    } else {
+      const nextTimeStart = results[i + 1].index;
+      const textBetween = cleanedInput.substring(timeEndIndex, nextTimeStart);
+      const separatorMatch = textBetween.match(/\s+(and|then|also|plus|next|after that)\s+/i);
+      
+      if (separatorMatch && separatorMatch.index !== undefined) {
+        segmentEnd = timeEndIndex + separatorMatch.index;
+      } else {
+        const sentenceEnd = textBetween.search(/[.!?]\s+/);
+        if (sentenceEnd !== -1) {
+          segmentEnd = timeEndIndex + sentenceEnd + 1;
+        } else {
+          segmentEnd = nextTimeStart;
+        }
+      }
+    }
     
-    const combinedText = `${beforeTime} ${afterTime}`.trim();
+    taskSegments.push({
+      timeResult: result,
+      startIndex: segmentStart,
+      endIndex: segmentEnd,
+    });
+  }
+  
+  const tasks: ExtractedTask[] = [];
+  
+  for (const segment of taskSegments) {
+    const { timeResult, startIndex, endIndex } = segment;
+    const timeText = timeResult.text;
+    const reminderTime = timeResult.start.date().toISOString();
     
-    const cleanedText = combinedText
-      .replace(/^[,.\s]+/, '')
-      .replace(/[,.\s]+$/, '')
+    const rawSegment = cleanedInput.substring(startIndex, endIndex);
+    
+    let taskText = rawSegment
+      .replace(new RegExp(escapeRegex(timeText), 'gi'), ' ')
+      .replace(/^[\s,.\-:;]+/, '')
+      .replace(/[\s,.\-:;]+$/, '')
+      .replace(/^(and|then|also|plus|next|after that|at|on|by)\s+/gi, '')
+      .replace(/\s+(and|then|also|plus)$/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
     
-    if (cleanedText.length > 0) {
-      taskText = cleanedText;
-    } else {
-      taskText = `Task at ${timeText}`;
+    taskText = taskText.charAt(0).toUpperCase() + taskText.slice(1);
+    
+    if (taskText.length < 2) {
+      taskText = `Task scheduled`;
     }
     
     tasks.push({
@@ -59,11 +91,26 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
       reminderTime,
       originalTimeText: timeText,
     });
-    
-    lastEndIndex = afterTimeEnd;
   }
+  
+  return deduplicateTasks(tasks);
+}
 
-  return tasks;
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function deduplicateTasks(tasks: ExtractedTask[]): ExtractedTask[] {
+  const seen = new Map<string, ExtractedTask>();
+  
+  for (const task of tasks) {
+    const key = `${task.text.toLowerCase()}-${task.reminderTime}`;
+    if (!seen.has(key)) {
+      seen.set(key, task);
+    }
+  }
+  
+  return Array.from(seen.values());
 }
 
 export function parseRelativeTime(text: string): Date | null {
