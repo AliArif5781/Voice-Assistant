@@ -91,15 +91,13 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
       taskText = taskText.charAt(0).toUpperCase() + taskText.slice(1);
     }
     
-    if (taskText.length < 2) {
-      taskText = `Task scheduled`;
+    if (taskText.length >= 2) {
+      tasks.push({
+        text: taskText,
+        reminderTime,
+        originalTimeText: timeText,
+      });
     }
-    
-    tasks.push({
-      text: taskText,
-      reminderTime,
-      originalTimeText: timeText,
-    });
   }
   
   return deduplicateTasks(tasks);
