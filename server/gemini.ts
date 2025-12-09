@@ -29,7 +29,7 @@ export async function transcribeAudio(audioBase64: string, mimeType: string): Pr
           mimeType: mimeType,
         },
       },
-      "Please transcribe this audio. Only output the exact words spoken, nothing else. If no speech is detected, respond with 'No speech detected.'",
+      "Please transcribe this audio. Remove all filler words such as 'um', 'uh', 'uhm', 'hmm', 'ah', 'er', 'like' (when used as filler), 'you know', 'I mean', and similar hesitation sounds. Clean up the transcription to be clear and readable while preserving the meaning. Only output the cleaned transcribed words, nothing else. If no speech is detected, respond with 'No speech detected.'",
     ];
 
     const response = await ai.models.generateContent({
