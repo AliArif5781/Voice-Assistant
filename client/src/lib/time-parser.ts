@@ -75,7 +75,7 @@ export function extractTasksFromText(text: string): ExtractedTask[] {
       .replace(new RegExp(escapeRegex(timeText), 'gi'), ' ')
       .replace(/^[\s,.\-:;]+/, '')
       .replace(/[\s,.\-:;]+$/, '')
-      .replace(/^(hi|hello|hey|okay|ok|so|well|alright|right|fast)[,.\s]+/gi, '')
+      .replace(/^(hi|hello|hey|okay|ok|so|well|alright|right|fast|actually|basically|literally|honestly|really|just|like)[,.\s]+/gi, '')
       .replace(/^(and|then|also|plus|next|after that|at|on|by|today|tomorrow)\s+/gi, '')
       .replace(/^(i have to|i need to|i want to|i will|i'll|i'm going to|i am going to|i should|i must)\s+/gi, '')
       .replace(/^(in the morning|in the afternoon|in the evening|this morning|this afternoon|this evening)\s+/gi, '')
