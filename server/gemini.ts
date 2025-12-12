@@ -68,7 +68,14 @@ export async function extractTasksFromTranscript(transcript: string): Promise<Ex
     yesterdayDate.setDate(yesterdayDate.getDate() - 1);
     const yesterdayDateStr = yesterdayDate.toISOString().split('T')[0];
     
-    const prompt = `Analyze the following spoken text and extract important tasks, action items, and key information. Create a structured task list.
+    const prompt = `Analyze the following spoken text and extract tasks. IMPORTANT: Create a SEPARATE task for EACH individual item mentioned.
+
+CRITICAL RULE: If someone lists multiple items (like "buy onion, potato, tomato, apple"), you MUST create a separate task for EACH item:
+- "Buy onion"
+- "Buy potato"
+- "Buy tomato"
+- "Buy apple"
+DO NOT group items together into one task. Each item = one separate task entry.
 
 Current date and time context:
 - Today is: ${currentDateStr}
@@ -86,25 +93,26 @@ Time context for common phrases:
 
 Spoken text: "${transcript}"
 
-For each task or important piece of information found, provide:
-- title: A concise title for the task/item (max 50 chars) - just the core task, no time references
-- description: Additional context if needed (null if not needed)
-- priority: "high", "medium", or "low" based on urgency/importance mentioned
-- category: One of: "Task", "Meeting", "Reminder", "Note", "Follow-up", "Deadline", "Idea"
-- dueDate: ISO date string. IMPORTANT: Convert relative dates properly:
+For EACH individual item/task mentioned, provide:
+- title: A concise title (max 50 chars) - just the item name or core task
+- description: null (keep it simple)
+- priority: "low" for shopping items, "medium" for regular tasks, "high" for urgent items
+- category: "Task" for shopping/to-do items, "Meeting" for appointments, "Reminder" for reminders
+- dueDate: ISO date string if time mentioned, null otherwise. Convert relative dates:
   - "today" = ${currentDateStr}
   - "tomorrow" = ${tomorrowDateStr}
   - "yesterday" = ${yesterdayDateStr}
-  - If someone says "dinner with friend today", use ${currentDateStr}T19:00:00.000Z
-  - If someone says "meeting tomorrow morning", use ${tomorrowDateStr}T09:00:00.000Z
-  - Always include time in the ISO string based on context clues
-- actionItems: Array of specific action steps to complete this task
+- actionItems: [] (empty array)
 
-Return a JSON array of objects. If no meaningful tasks are found, return an empty array [].
-Only return valid JSON, no markdown formatting or explanation.
+Return a JSON array with ONE object per item. If no meaningful items found, return [].
+Only return valid JSON, no markdown formatting.
 
-Example output:
-[{"title":"Dinner with friend","description":null,"priority":"medium","category":"Meeting","dueDate":"${currentDateStr}T19:00:00.000Z","actionItems":[]}]`;
+Example - if user says "I need to buy onion, potato, apple":
+[
+  {"title":"Buy onion","description":null,"priority":"low","category":"Task","dueDate":null,"actionItems":[]},
+  {"title":"Buy potato","description":null,"priority":"low","category":"Task","dueDate":null,"actionItems":[]},
+  {"title":"Buy apple","description":null,"priority":"low","category":"Task","dueDate":null,"actionItems":[]}
+]`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
