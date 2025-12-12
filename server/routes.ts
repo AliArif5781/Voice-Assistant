@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertVoiceInteractionSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
-import { processVoiceInput, isGeminiConfigured, transcribeAudio } from "./gemini";
+import { processVoiceInput, isGeminiConfigured, transcribeAudio, extractTasksFromTranscript } from "./gemini";
 import { extractTasksFromText } from "./time-parser";
 
 export async function registerRoutes(
@@ -110,7 +110,7 @@ export async function registerRoutes(
     });
   });
 
-  // Extract tasks with times from transcription text
+  // Extract tasks with times from transcription text (simple regex-based)
   app.post("/api/extract-tasks", async (req, res) => {
     try {
       const { text } = req.body;
@@ -123,6 +123,30 @@ export async function registerRoutes(
       res.json({ tasks });
     } catch (error: any) {
       console.error("Task extraction error:", error);
+      res.status(500).json({ error: "Failed to extract tasks", message: error.message });
+    }
+  });
+
+  // AI-powered task extraction from transcription
+  app.post("/api/extract-tasks-ai", async (req, res) => {
+    try {
+      if (!isGeminiConfigured()) {
+        return res.status(503).json({ 
+          error: "Gemini API not configured",
+          message: "Please add your GEMINI_API_KEY to use AI task extraction"
+        });
+      }
+
+      const { transcript } = req.body;
+      
+      if (!transcript || typeof transcript !== "string") {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+
+      const tasks = await extractTasksFromTranscript(transcript);
+      res.json({ tasks });
+    } catch (error: any) {
+      console.error("AI task extraction error:", error);
       res.status(500).json({ error: "Failed to extract tasks", message: error.message });
     }
   });

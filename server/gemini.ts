@@ -47,3 +47,64 @@ export async function transcribeAudio(audioBase64: string, mimeType: string): Pr
 export function isGeminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
+
+export interface ExtractedTaskInfo {
+  title: string;
+  description: string | null;
+  priority: "high" | "medium" | "low";
+  category: string;
+  dueDate: string | null;
+  actionItems: string[];
+}
+
+export async function extractTasksFromTranscript(transcript: string): Promise<ExtractedTaskInfo[]> {
+  try {
+    const prompt = `Analyze the following spoken text and extract important tasks, action items, and key information. Create a structured task list.
+
+Spoken text: "${transcript}"
+
+For each task or important piece of information found, provide:
+- title: A concise title for the task/item (max 50 chars)
+- description: Additional context if needed (null if not needed)
+- priority: "high", "medium", or "low" based on urgency/importance mentioned
+- category: One of: "Task", "Meeting", "Reminder", "Note", "Follow-up", "Deadline", "Idea"
+- dueDate: ISO date string if a specific time/date is mentioned, null otherwise
+- actionItems: Array of specific action steps to complete this task
+
+Return a JSON array of objects. If no meaningful tasks are found, return an empty array [].
+Only return valid JSON, no markdown formatting or explanation.
+
+Example output:
+[{"title":"Call John about project","description":"Discuss budget concerns","priority":"high","category":"Follow-up","dueDate":"2024-12-13T14:00:00.000Z","actionItems":["Prepare budget report","Schedule 30 min call"]}]`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const text = response.text || "[]";
+    
+    // Clean up the response - remove markdown code blocks if present
+    let cleanedText = text.trim();
+    if (cleanedText.startsWith("```json")) {
+      cleanedText = cleanedText.slice(7);
+    } else if (cleanedText.startsWith("```")) {
+      cleanedText = cleanedText.slice(3);
+    }
+    if (cleanedText.endsWith("```")) {
+      cleanedText = cleanedText.slice(0, -3);
+    }
+    cleanedText = cleanedText.trim();
+
+    try {
+      const tasks = JSON.parse(cleanedText);
+      return Array.isArray(tasks) ? tasks : [];
+    } catch {
+      console.error("Failed to parse Gemini response as JSON:", cleanedText);
+      return [];
+    }
+  } catch (error: any) {
+    console.error("Gemini task extraction error:", error);
+    throw new Error(error.message || "Failed to extract tasks from transcript");
+  }
+}

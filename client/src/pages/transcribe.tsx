@@ -3,9 +3,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { 
   Mic, MicOff, Volume2, Loader2, AudioWaveform, ArrowLeft, 
-  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X, Calendar as CalendarIcon, Clock
+  Waves, Copy, Check, Trash2, Download, Cloud, Pencil, X, Calendar as CalendarIcon, Clock,
+  CheckCircle2, AlertCircle, Flag, ListTodo
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,13 +28,22 @@ interface TranscriptItem {
   text: string;
   savedToCloud: boolean;
   completed: boolean;
-  scheduledAt?: string | null;
+  scheduledAt: string | null;
 }
 
 interface ExtractedTask {
   text: string;
   reminderTime: string | null;
   originalTimeText: string | null;
+}
+
+interface AIExtractedTask {
+  title: string;
+  description: string | null;
+  priority: "high" | "medium" | "low";
+  category: string;
+  dueDate: string | null;
+  actionItems: string[];
 }
 
 function VoiceWaveform({ isActive }: { isActive: boolean }) {
@@ -70,6 +81,7 @@ export default function Transcribe() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [extractedTasks, setExtractedTasks] = useState<ExtractedTask[]>([]);
+  const [aiExtractedTasks, setAiExtractedTasks] = useState<AIExtractedTask[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   
   // Date/time picker state for saving
@@ -174,13 +186,34 @@ export default function Transcribe() {
     savePendingTranscript();
   }, [user, firebaseConfigured, toast]);
 
-  const extractTasksFromTranscript = (transcript: string) => {
+  const extractTasksFromTranscriptAI = async (transcript: string) => {
     setIsExtracting(true);
     try {
-      const tasks = extractTasksFromText(transcript);
-      setExtractedTasks(tasks);
+      // Use AI-powered task extraction
+      const response = await fetch('/api/extract-tasks-ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ transcript }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to extract tasks');
+      }
+
+      const data = await response.json();
+      setAiExtractedTasks(data.tasks || []);
+      
+      // Also do simple extraction as fallback
+      const simpleTasks = extractTasksFromText(transcript);
+      setExtractedTasks(simpleTasks);
     } catch (err) {
-      console.error('Task extraction error:', err);
+      console.error('AI task extraction error:', err);
+      // Fallback to simple extraction
+      const simpleTasks = extractTasksFromText(transcript);
+      setExtractedTasks(simpleTasks);
     } finally {
       setIsExtracting(false);
     }
@@ -192,6 +225,7 @@ export default function Transcribe() {
       setError(null);
       setCurrentTranscript("");
       setExtractedTasks([]);
+      setAiExtractedTasks([]);
       
       try {
         const audioBlob = await stopRecording();
@@ -223,7 +257,7 @@ export default function Transcribe() {
               
               if (transcript && transcript !== "No speech detected.") {
                 setCurrentTranscript(transcript);
-                await extractTasksFromTranscript(transcript);
+                await extractTasksFromTranscriptAI(transcript);
               } else {
                 setCurrentTranscript("No speech detected. Try speaking louder or closer to the microphone.");
               }
@@ -250,6 +284,7 @@ export default function Transcribe() {
       setError(null);
       setCurrentTranscript("");
       setExtractedTasks([]);
+      setAiExtractedTasks([]);
       await startRecording();
     }
   };
@@ -340,6 +375,7 @@ export default function Transcribe() {
   const handleDiscard = () => {
     setCurrentTranscript("");
     setExtractedTasks([]);
+    setAiExtractedTasks([]);
     setShowDatePicker(false);
     toast({
       title: "Discarded",
@@ -401,6 +437,102 @@ export default function Transcribe() {
       setSavedTranscripts(prev => [...savedItems, ...prev]);
       setCurrentTranscript("");
       setExtractedTasks([]);
+    } catch (err: any) {
+      console.error('Failed to save tasks:', err);
+      toast({
+        title: "Save Failed",
+        description: err.message || "Failed to save tasks.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingToCloud(false);
+    }
+  };
+
+  const handleSaveAITasks = async () => {
+    if (!user) {
+      localStorage.setItem('pendingTranscript', currentTranscript);
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save your tasks.",
+      });
+      setLocation("/signin");
+      return;
+    }
+
+    if (!firebaseConfigured) {
+      toast({
+        title: "Error",
+        description: "Firebase is not configured.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingToCloud(true);
+    
+    try {
+      const savedItems: TranscriptItem[] = [];
+      
+      // Save AI extracted tasks if available, otherwise fall back to simple extracted tasks
+      if (aiExtractedTasks.length > 0) {
+        for (const task of aiExtractedTasks) {
+          const taskText = task.description 
+            ? `${task.title} - ${task.description}${task.actionItems.length > 0 ? '\n' + task.actionItems.map(a => '• ' + a).join('\n') : ''}`
+            : task.title + (task.actionItems.length > 0 ? '\n' + task.actionItems.map(a => '• ' + a).join('\n') : '');
+          
+          const docId = await saveToFirestore('transcriptions', {
+            text: taskText,
+            userId: user.uid,
+            userEmail: user.email,
+            displayName: user.displayName || null,
+            createdAt: new Date().toISOString(),
+            scheduledAt: task.dueDate,
+            priority: task.priority,
+            category: task.category,
+            completed: false,
+          });
+          
+          savedItems.push({
+            id: docId,
+            text: taskText,
+            savedToCloud: true,
+            completed: false,
+            scheduledAt: task.dueDate,
+          });
+        }
+      } else {
+        for (const task of extractedTasks) {
+          const docId = await saveToFirestore('transcriptions', {
+            text: task.text,
+            userId: user.uid,
+            userEmail: user.email,
+            displayName: user.displayName || null,
+            createdAt: new Date().toISOString(),
+            scheduledAt: task.reminderTime,
+            originalTimeText: task.originalTimeText,
+            completed: false,
+          });
+          
+          savedItems.push({
+            id: docId,
+            text: task.text,
+            savedToCloud: true,
+            completed: false,
+            scheduledAt: task.reminderTime,
+          });
+        }
+      }
+      
+      toast({
+        title: "Saved",
+        description: `${savedItems.length} task${savedItems.length > 1 ? 's' : ''} saved successfully.`,
+      });
+      
+      setSavedTranscripts(prev => [...savedItems, ...prev]);
+      setCurrentTranscript("");
+      setExtractedTasks([]);
+      setAiExtractedTasks([]);
     } catch (err: any) {
       console.error('Failed to save tasks:', err);
       toast({
@@ -727,7 +859,68 @@ export default function Transcribe() {
                             </div>
                           )}
                           
-                          {extractedTasks.length > 0 && (
+                          {aiExtractedTasks.length > 0 && (
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2">
+                                <ListTodo className="w-4 h-4 text-primary" />
+                                <span className="text-sm text-foreground font-medium">
+                                  Task List ({aiExtractedTasks.length} item{aiExtractedTasks.length > 1 ? 's' : ''})
+                                </span>
+                              </div>
+                              {aiExtractedTasks.map((task, idx) => (
+                                <div 
+                                  key={idx}
+                                  className="p-4 rounded-lg bg-card border border-border"
+                                  data-testid={`ai-task-${idx}`}
+                                >
+                                  <div className="flex items-start justify-between gap-2 mb-2">
+                                    <h4 className="text-sm font-medium text-foreground flex-1">{task.title}</h4>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <Badge 
+                                        variant={task.priority === 'high' ? 'destructive' : task.priority === 'medium' ? 'default' : 'secondary'}
+                                        className="text-xs"
+                                      >
+                                        <Flag className="w-3 h-3 mr-1" />
+                                        {task.priority}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-xs">
+                                        {task.category}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  
+                                  {task.description && (
+                                    <p className="text-sm text-muted-foreground mb-2">{task.description}</p>
+                                  )}
+                                  
+                                  {task.dueDate && (
+                                    <div className="flex items-center gap-1.5 mb-2">
+                                      <CalendarIcon className="w-3.5 h-3.5 text-primary" />
+                                      <span className="text-xs text-primary font-medium">
+                                        {format(new Date(task.dueDate), "PPP 'at' p")}
+                                      </span>
+                                    </div>
+                                  )}
+                                  
+                                  {task.actionItems.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-border/50">
+                                      <p className="text-xs text-muted-foreground mb-2 font-medium">Action Items:</p>
+                                      <ul className="space-y-1.5">
+                                        {task.actionItems.map((item, itemIdx) => (
+                                          <li key={itemIdx} className="flex items-start gap-2 text-sm text-foreground">
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                                            <span>{item}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {aiExtractedTasks.length === 0 && extractedTasks.length > 0 && (
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
                                 <Clock className="w-4 h-4 text-primary" />
@@ -755,10 +948,10 @@ export default function Transcribe() {
                             </div>
                           )}
 
-                          {extractedTasks.length > 0 ? (
+                          {(aiExtractedTasks.length > 0 || extractedTasks.length > 0) ? (
                             <div className="flex gap-2">
                               <Button
-                                onClick={handleSaveExtractedTasks}
+                                onClick={handleSaveAITasks}
                                 disabled={isSavingToCloud}
                                 className="flex-1"
                                 data-testid="button-save-tasks"
@@ -771,7 +964,7 @@ export default function Transcribe() {
                                 ) : (
                                   <>
                                     <Cloud className="w-4 h-4 mr-2" />
-                                    Save {extractedTasks.length} Task{extractedTasks.length > 1 ? 's' : ''}
+                                    Save {aiExtractedTasks.length > 0 ? aiExtractedTasks.length : extractedTasks.length} Task{(aiExtractedTasks.length > 0 ? aiExtractedTasks.length : extractedTasks.length) > 1 ? 's' : ''}
                                   </>
                                 )}
                               </Button>
