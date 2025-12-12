@@ -477,9 +477,7 @@ export default function Transcribe() {
       // Save AI extracted tasks if available, otherwise fall back to simple extracted tasks
       if (aiExtractedTasks.length > 0) {
         for (const task of aiExtractedTasks) {
-          const taskText = task.description 
-            ? `${task.title} - ${task.description}${task.actionItems.length > 0 ? '\n' + task.actionItems.map(a => '• ' + a).join('\n') : ''}`
-            : task.title + (task.actionItems.length > 0 ? '\n' + task.actionItems.map(a => '• ' + a).join('\n') : '');
+          const taskText = task.title;
           
           const docId = await saveToFirestore('transcriptions', {
             text: taskText,
