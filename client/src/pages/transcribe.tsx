@@ -873,46 +873,14 @@ export default function Transcribe() {
                                   className="p-4 rounded-lg bg-card border border-border"
                                   data-testid={`ai-task-${idx}`}
                                 >
-                                  <div className="flex items-start justify-between gap-2 mb-2">
-                                    <h4 className="text-sm font-medium text-foreground flex-1">{task.title}</h4>
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <Badge 
-                                        variant={task.priority === 'high' ? 'destructive' : task.priority === 'medium' ? 'default' : 'secondary'}
-                                        className="text-xs"
-                                      >
-                                        <Flag className="w-3 h-3 mr-1" />
-                                        {task.priority}
-                                      </Badge>
-                                      <Badge variant="outline" className="text-xs">
-                                        {task.category}
-                                      </Badge>
-                                    </div>
-                                  </div>
-                                  
-                                  {task.description && (
-                                    <p className="text-sm text-muted-foreground mb-2">{task.description}</p>
-                                  )}
+                                  <h4 className="text-sm font-medium text-foreground">{task.title}</h4>
                                   
                                   {task.dueDate && (
-                                    <div className="flex items-center gap-1.5 mb-2">
+                                    <div className="flex items-center gap-1.5 mt-2">
                                       <CalendarIcon className="w-3.5 h-3.5 text-primary" />
                                       <span className="text-xs text-primary font-medium">
                                         {format(new Date(task.dueDate), "PPP 'at' p")}
                                       </span>
-                                    </div>
-                                  )}
-                                  
-                                  {task.actionItems.length > 0 && (
-                                    <div className="mt-3 pt-3 border-t border-border/50">
-                                      <p className="text-xs text-muted-foreground mb-2 font-medium">Action Items:</p>
-                                      <ul className="space-y-1.5">
-                                        {task.actionItems.map((item, itemIdx) => (
-                                          <li key={itemIdx} className="flex items-start gap-2 text-sm text-foreground">
-                                            <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                                            <span>{item}</span>
-                                          </li>
-                                        ))}
-                                      </ul>
                                     </div>
                                   )}
                                 </div>
